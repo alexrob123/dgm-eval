@@ -1,14 +1,16 @@
 """
-prdc from https://github.com/clovaai/generative-evaluation-prdc 
+prdc from https://github.com/clovaai/generative-evaluation-prdc
 Copyright (c) 2020-present NAVER Corp.
 MIT license
 Modified to also report realism score from https://arxiv.org/abs/1904.06991
 """
-import numpy as np
-import sklearn.metrics
+
 import sys
 
-__all__ = ['compute_prdc']
+import numpy as np
+import sklearn.metrics
+
+__all__ = ["compute_prdc"]
 
 
 def compute_pairwise_distance(data_x, data_y=None):
@@ -22,7 +24,8 @@ def compute_pairwise_distance(data_x, data_y=None):
     if data_y is None:
         data_y = data_x
     dists = sklearn.metrics.pairwise_distances(
-        data_x, data_y, metric='euclidean', n_jobs=8)
+        data_x, data_y, metric="euclidean", n_jobs=8
+    )
     return dists
 
 
@@ -65,38 +68,43 @@ def compute_prdc(real_features, fake_features, nearest_k, realism=False):
         dict of precision, recall, density, and coverage.
     """
 
-    print('Num real: {} Num fake: {}'
-          .format(real_features.shape[0], fake_features.shape[0]), file=sys.stderr)
+    print(
+        "Num real: {} Num fake: {}".format(
+            real_features.shape[0],
+            fake_features.shape[0],
+        ),
+        file=sys.stderr,
+    )
 
     real_nearest_neighbour_distances = compute_nearest_neighbour_distances(
-        real_features, nearest_k)
+        real_features,
+        nearest_k,
+    )
     fake_nearest_neighbour_distances = compute_nearest_neighbour_distances(
-        fake_features, nearest_k)
-    distance_real_fake = compute_pairwise_distance(
-        real_features, fake_features)
+        fake_features,
+        nearest_k,
+    )
+    distance_real_fake = compute_pairwise_distance(real_features, fake_features)
 
     precision = (
-            distance_real_fake <
-            np.expand_dims(real_nearest_neighbour_distances, axis=1)
-    ).any(axis=0).mean()
-
+        (distance_real_fake < np.expand_dims(real_nearest_neighbour_distances, axis=1))
+        .any(axis=0)
+        .mean()
+    )
     recall = (
-            distance_real_fake <
-            np.expand_dims(fake_nearest_neighbour_distances, axis=0)
-    ).any(axis=1).mean()
+        (distance_real_fake < np.expand_dims(fake_nearest_neighbour_distances, axis=0))
+        .any(axis=1)
+        .mean()
+    )
 
-    density = (1. / float(nearest_k)) * (
-            distance_real_fake <
-            np.expand_dims(real_nearest_neighbour_distances, axis=1)
+    density = (1.0 / float(nearest_k)) * (
+        distance_real_fake < np.expand_dims(real_nearest_neighbour_distances, axis=1)
     ).sum(axis=0).mean()
-
     coverage = (
-            distance_real_fake.min(axis=1) <
-            real_nearest_neighbour_distances
+        distance_real_fake.min(axis=1) < real_nearest_neighbour_distances
     ).mean()
 
-    d = dict(precision=precision, recall=recall,
-                density=density, coverage=coverage)
+    d = dict(precision=precision, recall=recall, density=density, coverage=coverage)
 
     if realism:
         """
@@ -105,10 +113,13 @@ def compute_prdc(real_features, fake_features, nearest_k, realism=False):
         In other words, the maximum in Equation 3 is not taken over all φr ∈ Φr but only over 
         those φr whose associated hypersphere is smaller than the median.
         """
-        mask = real_nearest_neighbour_distances < np.median(real_nearest_neighbour_distances)
+        mask = real_nearest_neighbour_distances < np.median(
+            real_nearest_neighbour_distances
+        )
 
-        d['realism'] = (
-                np.expand_dims(real_nearest_neighbour_distances[mask], axis=1)/distance_real_fake[mask]
+        d["realism"] = (
+            np.expand_dims(real_nearest_neighbour_distances[mask], axis=1)
+            / distance_real_fake[mask]
         ).max(axis=0)
 
     return d

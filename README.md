@@ -4,16 +4,16 @@
 
 # Evaluation of Deep Generative models
 
-The codebase for evaluation of deep generative models as presented in [*Exposing flaws of generative model evaluation metrics and their unfair treatment of diffusion models*](https://arxiv.org/abs/2306.04675), accepted to [NeurIPS 2023](https://neurips.cc/virtual/2023/poster/73076)
+The codebase for evaluation of deep generative models as presented in [_Exposing flaws of generative model evaluation metrics and their unfair treatment of diffusion models_](https://arxiv.org/abs/2306.04675), accepted to [NeurIPS 2023](https://neurips.cc/virtual/2023/poster/73076)
 
 We studied 41 generative models across a diverse range of image datasets and found:
 
-* The state-of-the-art perceptual realism of diffusion models as judged by humans is not reflected in commonly reported metrics when using the default Inception-V3 network.
-* Supervised networks do not provide a perceptual space that generalizes well for image evaluation, and neither do self-supervised methods from particular families.
-* [DINOv2](https://github.com/facebookresearch/dinov2) provides such a generalized representation space and allows for much richer evaluation of generative models. **Researchers should replace Inception-V3 in all evaluation metrics**. We provide an extensive DINOv2 leaderboard [below](#dinov2-leaderboard) and have added the results to *paperswithcode.com*.
-* Generative models directly memorize training examples on simple, smaller datasets like CIFAR10, but not necessarily on more complex datasets like ImageNet. However, our experiments show that currently proposed diagnostic metrics do not properly detect memorization.
+- The state-of-the-art perceptual realism of diffusion models as judged by humans is not reflected in commonly reported metrics when using the default Inception-V3 network.
+- Supervised networks do not provide a perceptual space that generalizes well for image evaluation, and neither do self-supervised methods from particular families.
+- [DINOv2](https://github.com/facebookresearch/dinov2) provides such a generalized representation space and allows for much richer evaluation of generative models. **Researchers should replace Inception-V3 in all evaluation metrics**. We provide an extensive DINOv2 leaderboard [below](#dinov2-leaderboard) and have added the results to _paperswithcode.com_.
+- Generative models directly memorize training examples on simple, smaller datasets like CIFAR10, but not necessarily on more complex datasets like ImageNet. However, our experiments show that currently proposed diagnostic metrics do not properly detect memorization.
 
-Here we provide code to compute the following 15 generative evaluation metrics using 8 different encoder networks: 
+Here we provide code to compute the following 15 generative evaluation metrics using 8 different encoder networks:
 
 Metrics:
 
@@ -43,15 +43,15 @@ Encoders:
 - [MAE](https://github.com/facebookresearch/mae)
 - [data2vec](https://ai.facebook.com/blog/ai-self-supervised-learning-data2vec/)
 
-| ![image](figures/humaneval-vs-inception.png "Inception") |
-|:--:| 
-| *Our multifaceted investigation of generative evaluation shows that diffusion models are unfairly punished by the Inception network: they synthesize more realistic images as judged by humans and their diversity more closely resembles the training data, yet are consistently ranked worse than GANs on metrics computed in Inception-V3 representation space.* |
-
+|                                                                                                                                                      ![image](figures/humaneval-vs-inception.png "Inception")                                                                                                                                                       |
+| :-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: |
+| _Our multifaceted investigation of generative evaluation shows that diffusion models are unfairly punished by the Inception network: they synthesize more realistic images as judged by humans and their diversity more closely resembles the training data, yet are consistently ranked worse than GANs on metrics computed in Inception-V3 representation space._ |
 
 ## Installation & Usage
 
 ### Installation
-First clone this repository, then navigate to the directory and pip install to install all required packages. 
+
+First clone this repository, then navigate to the directory and pip install to install all required packages.
 
 ```
 git clone git@github.com:layer6ai-labs/dgm-eval
@@ -71,17 +71,18 @@ pip install -e .
 
 ### Usage
 
-Computing metrics only requires the paths to either locally hosted image datasets or torchvision.datasets. Encoders are automatically downloaded. For example, the following will compute the Fréchet distance (fd), kernel distance (kd), precision/recall/density/coverage (prdc), and the C<sub>T</sub> score (ct) using DINOv2 (default) as the encoder. 
+Computing metrics only requires the paths to either locally hosted image datasets or torchvision.datasets. Encoders are automatically downloaded. For example, the following will compute the Fréchet distance (fd), kernel distance (kd), precision/recall/density/coverage (prdc), and the C<sub>T</sub> score (ct) using DINOv2 (default) as the encoder.
 
 ```
-python -m dgm_eval path/to/training_dataset path/to/generated_dataset \
-				--test_path path/to/test_dataset \
-				--model dinov2 \
-				--metrics fd kd prdc ct
+python -m dgm_eval \
+	--train path/to/training_dataset \
+	--gen path/to/generated_dataset \
+	--test_path path/to/test_dataset \
+	--model dinov2 \
+	--metrics fd kd prdc ct
 ```
 
-See ```scripts/run_experiments.sh``` or run ```python dgm_eval -h``` for further details on commandline parameters. As we suggest in the paper, metrics should be reported using the default model size (DINOv2-ViT-L/14) for final leaderboard values, but tracking progress during training is a factor of 4 more efficient with DINOv2-ViT-B/14. To use this architecture instead simply add ```--arch vitb14``` as a commandline parameter.
-
+See `scripts/run_experiments.sh` or run `python dgm_eval -h` for further details on commandline parameters. As we suggest in the paper, metrics should be reported using the default model size (DINOv2-ViT-L/14) for final leaderboard values, but tracking progress during training is a factor of 4 more efficient with DINOv2-ViT-B/14. To use this architecture instead simply add `--arch vitb14` as a commandline parameter.
 
 Local datasets should either be un-conditional:
 
@@ -104,26 +105,30 @@ local/path/
 		000000.png
 		000001.png
 		...
-	...		
+	...
 ```
 
-The directory should only include image files. To download and use a dataset from torchvision.datasets, just specify the dataset and train/test string: 
+The directory should only include image files. To download and use a dataset from torchvision.datasets, just specify the dataset and train/test string:
 
 ```
-python dgm_eval CIFAR10:train CIFAR10:test
+python -m dgm_eval \
+	--train CIFAR10--train \
+	--gen CIFAR10--test
 ```
 
 A full example is as follows:
 
 ```
-python -m dgm_eval CIFAR10:train CIFAR10:test \
-					--model dinov2 \
-					--metrics fd kd prdc \
-					--device cuda \
-					--batch_size 256 \
-					--nsample 512 
-					
-									
+python -m dgm_eval \
+	--train CIFAR10--train \
+	--gen CIFAR10--test \
+	--model dinov2 \
+	--metrics fd kd prdc \
+	--device cuda \
+	--batch_size 256 \
+	--nsample 512
+
+
 >>> ....
 >>> Num real: 512 Num fake: 512
 >>> fd: 862.53745
@@ -138,43 +143,42 @@ python -m dgm_eval CIFAR10:train CIFAR10:test \
 ## Data Access
 
 ### Images
-All generated data shown in this work can be accessed at the following link: 
+
+All generated data shown in this work can be accessed at the following link:
 
 [drive.google.com/drive/folders/1X0MFaUta90d3zF9xG4KchjR-8SE0cT_7?usp=sharing](https://drive.google.com/drive/folders/1X0MFaUta90d3zF9xG4KchjR-8SE0cT_7?usp=sharing)
 
 Including:
 
-* Datasets of 100,000 image samples from 41 generative models across ```CIFAR10/```, ```imagenet256/```, ```LSUN Bedroom/```, and ```FFHQ256/```.
-* Training & test data at 256 x 256 resolution
-* Generated datasets for controlled experiments presented in the Appendix can be found in ```toy-datasets/```
+- Datasets of 100,000 image samples from 41 generative models across `CIFAR10/`, `imagenet256/`, `LSUN Bedroom/`, and `FFHQ256/`.
+- Training & test data at 256 x 256 resolution
+- Generated datasets for controlled experiments presented in the Appendix can be found in `toy-datasets/`
 
 ### Human Evaluation
 
-Data for human evaluation of image realism can be found at ```data/human-evaluation-realism/```
-
+Data for human evaluation of image realism can be found at `data/human-evaluation-realism/`
 
 ## Dinov2 Leaderboard
 
-| ![image](figures/humaneval-vs-dinov2.png "DINOv2") |
-|:--:| 
-| *DINOv2 is the best suited model for generative evaluation. Our extensive quantitative and qualitative assessments showed that it distills a generalized representation space suitable for evaluation of diverse image datasets. Metrics computed in DINOv2 space show much better alignment with human evaluation than those in Inception-V3 space.* |
+|                                                                                                                                                  ![image](figures/humaneval-vs-dinov2.png "DINOv2")                                                                                                                                                   |
+| :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: |
+| _DINOv2 is the best suited model for generative evaluation. Our extensive quantitative and qualitative assessments showed that it distills a generalized representation space suitable for evaluation of diverse image datasets. Metrics computed in DINOv2 space show much better alignment with human evaluation than those in Inception-V3 space._ |
 
 We have included leaderboard values on paperswithcode (links), and list all metrics in a table below:
 
-* [CIFAR10](https://paperswithcode.com/sota/image-generation-on-cifar-10)
-* [ImageNet 256x256](https://paperswithcode.com/sota/image-generation-on-imagenet-256x256)
-* [LSUN Bedroom](https://paperswithcode.com/sota/image-generation-on-lsun-bedroom-256-x-256)
-* [FFHQ 256x256](https://paperswithcode.com/sota/image-generation-on-ffhq-256-x-256)
+- [CIFAR10](https://paperswithcode.com/sota/image-generation-on-cifar-10)
+- [ImageNet 256x256](https://paperswithcode.com/sota/image-generation-on-imagenet-256x256)
+- [LSUN Bedroom](https://paperswithcode.com/sota/image-generation-on-lsun-bedroom-256-x-256)
+- [FFHQ 256x256](https://paperswithcode.com/sota/image-generation-on-ffhq-256-x-256)
 
 ![image](figures/leaderboard.png)
-
 
 ## Visualizing Heatmaps
 
 Heatmaps can be visualized for each model on any given image datasets by the following, with examples following:
 
 ```
-python -m dgm_eval CIFAR10:train CIFAR10:test \
+python -m dgm_eval CIFAR10--train CIFAR10--test \
 					 --model inception \
 					 --metrics fd \
 					 --device cuda \
@@ -183,9 +187,9 @@ python -m dgm_eval CIFAR10:train CIFAR10:test \
 					 --heatmaps
 ```
 
-Images             |  Inception | DINOv2 | 
-:---:|:---:| :---:| 
-![image](figures/heatmaps_inception_1.png) | ![image](figures/heatmaps_inception_2.png) | ![image](figures/heatmaps_dinov2_2.png) 
+|                   Images                   |                 Inception                  |                 DINOv2                  |
+| :----------------------------------------: | :----------------------------------------: | :-------------------------------------: |
+| ![image](figures/heatmaps_inception_1.png) | ![image](figures/heatmaps_inception_2.png) | ![image](figures/heatmaps_dinov2_2.png) |
 
 ## Citing
 
@@ -206,5 +210,3 @@ Authors: George Stein, Jesse C. Cresswell, Rasa Hosseinzadeh, Yi Sui, Brendan Le
 ## License
 
 This data and code is licensed under the MIT License, copyright by Layer 6 AI.
-
-

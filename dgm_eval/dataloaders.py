@@ -1,29 +1,43 @@
 import os
-import sys
 import pathlib
+import sys
 
 import numpy as np
 import torch
 import torchvision
-
 import torchvision.transforms
-
 from PIL import Image
 
+IMAGE_EXTENSIONS = {"bmp", "jpg", "jpeg", "pgm", "png", "ppm", "tif", "tiff", "webp"}
+IMAGE_EXTENSIONS = IMAGE_EXTENSIONS | {ext.upper() for ext in IMAGE_EXTENSIONS}
 
-IMAGE_EXTENSIONS = {'bmp', 'jpg', 'jpeg', 'pgm', 'png', 'ppm',
-                    'tif', 'tiff', 'webp'}
-IMAGE_EXTENSIONS = IMAGE_EXTENSIONS | { ext.upper() for ext in IMAGE_EXTENSIONS }
+TORCHVISION_DATA_PATH = "./data/"
 
-TORCHVISION_DATA_PATH = './data/'
 
 def get_files_at_path(path):
     """Return list of all files at path of type IMAGE_EXTENSIONS"""
- 
-    files = sorted([file for ext in IMAGE_EXTENSIONS
-                    for file in path.glob(f'*.{ext}')])
+
+    files = sorted([file for ext in IMAGE_EXTENSIONS for file in path.glob(f"*.{ext}")])
 
     return files
+
+
+def get_dataset_name(p):
+    parts = []
+    current = p
+
+    while True:
+        base = os.path.basename(current)
+        parent = os.path.dirname(current)
+
+        parts.append(base)
+
+        if base.isdigit() or base in ("train", "test"):
+            current = parent
+        else:
+            break
+
+    return "-".join(reversed(parts))
 
 
 class ImagePathDataset(torch.utils.data.Dataset):
@@ -32,6 +46,7 @@ class ImagePathDataset(torch.utils.data.Dataset):
 
     Files must have image extensions specified in IMAGE_EXTENSIONS
     """
+
     def __init__(self, files, transform=None):
         self.files = sorted(files)
         self.transform = transform
@@ -41,52 +56,74 @@ class ImagePathDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, i):
         path = self.files[i]
-        img = Image.open(path).convert('RGB')
+        img = Image.open(path).convert("RGB")
         if self.transform is not None:
             img = self.transform(img)
         return img
+
 
 class NpzDataset(torch.utils.data.Dataset):
     """
     Create a custom dataset from a npz file of images, as used in ADM's evaluation code.
     See https://github.com/openai/guided-diffusion/tree/main/evaluations for more details.
     """
+
     def __init__(self, path, transform=None):
         self.path = path
-        self.data = np.load(path)['arr_0']
+        self.data = np.load(path)["arr_0"]
         self.transform = transform
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, i):
-        img = Image.fromarray(self.data[i]).convert('RGB')
+        img = Image.fromarray(self.data[i]).convert("RGB")
         if self.transform is not None:
             img = self.transform(img)
         return img
 
-class DataLoader():
+
+class DataLoader:
     """
     Create Datasets and Dataloaders from ImagePathDataset and from torchvision.datasets.
     """
-    def __init__(self, path, train_set=False, nsample=-1, transform=None,
-                batch_size=50, num_workers=1, seed=13579, random_sample=True, sample_w_replacement=False):
+
+    def __init__(
+        self,
+        path,
+        train_set=False,
+        nsample=-1,
+        transform=None,
+        batch_size=50,
+        num_workers=1,
+        seed=13579,
+        random_sample=True,
+        sample_w_replacement=False,
+        per_label=False,
+    ):
 
         self.path = path
-        self.train_set = train_set 
+        self.train_set = train_set
         self.nsample = nsample
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.seed = seed
+
         # for class conditional models, remember the labels as loading
         self.labels = []
+        self.per_label = per_label
 
         self.random_sample = random_sample
         self.sample_w_replacement = sample_w_replacement
 
         if sample_w_replacement:
-            print((f'Warning: sample_w_replacement={sample_w_replacement}.'
-                    f'Sampling with replacement from path {path}'), file=sys.stderr)
+            print(
+                (
+                    f"Warning: sample_w_replacement={sample_w_replacement}."
+                    f"Sampling with replacement from path {path}"
+                ),
+                file=sys.stderr,
+            )
             self.seed += 1
 
         self.transform = transform
@@ -103,9 +140,11 @@ class DataLoader():
     def get_dataset(self):
         """
         Get dataset from local path or from torchvision.datasets
+
+        Only `get_local_dataset` is triggering labels.
         """
         if os.path.exists(self.path):
-            if os.path.isfile(self.path) and self.path.endswith('.npz'):
+            if os.path.isfile(self.path) and self.path.endswith(".npz"):
                 self.get_local_adm_dataset()
             else:
                 self.get_local_dataset()
@@ -118,7 +157,9 @@ class DataLoader():
         Get dataset stored in ADM npz format (see https://github.com/openai/guided-diffusion/tree/main/evaluations) from disk
         """
 
-        self.dataset_name = os.path.splitext(os.path.basename(os.path.normpath(self.path)))[0]
+        self.dataset_name = os.path.splitext(
+            os.path.basename(os.path.normpath(self.path))
+        )[0]
 
         self.files = None
         self.labels = None
@@ -126,21 +167,23 @@ class DataLoader():
         try:
             self.data_set = NpzDataset(self.path, transform=self.transform)
         except:
-            raise RuntimeError(f'Images cannot be loaded from {self.path}. Expecting ADM-style npz file: {IMAGE_EXTENSIONS}')
+            raise RuntimeError(
+                f"Images cannot be loaded from {self.path}. Expecting ADM-style npz file: {IMAGE_EXTENSIONS}"
+            )
 
     def get_local_dataset(self):
         """
         Get dataset from disk
 
-        Currently accepted formats: 
+        Currently accepted formats:
 
-        1.) Path to folder containing individual images of extension types in IMAGE_EXTENSIONS 
+        1.) Path to folder containing individual images of extension types in IMAGE_EXTENSIONS
 
-        2.) Path to folder containing sub-folders for each image class, 
+        2.) Path to folder containing sub-folders for each image class,
             where each sub-folder contains individual images of extension types in IMAGE_EXTENSIONS
         """
 
-        self.dataset_name = os.path.basename(os.path.normpath(self.path))
+        self.dataset_name = get_dataset_name(self.path)
 
         image_path = pathlib.Path(self.path)
 
@@ -153,7 +196,9 @@ class DataLoader():
 
         if not self.files:
             # Assume sub-folders for image classes
-            class_dirs = sorted(image_path.glob('*'), key=get_order) # look for all subfolders in the numerical order
+            class_dirs = sorted(
+                image_path.glob("*"), key=get_order
+            )  # look for all subfolders in the numerical order
             self.files = []
             for f in class_dirs:
                 files_in_path = get_files_at_path(f)
@@ -161,81 +206,180 @@ class DataLoader():
                 self.labels.extend([class_idx for _ in range(len(files_in_path))])
                 class_idx += 1
         self.labels = np.array(self.labels, dtype=np.int32)
-        # print(f'len labels {len(self.labels)}')
 
         # Confirm data at path is in proper format
         try:
             self.data_set = ImagePathDataset(self.files, transform=self.transform)
         except:
-            raise RuntimeError(f'Images cannot be loaded from {self.path}. Expecting path full of images: {IMAGE_EXTENSIONS}')
-   
+            raise RuntimeError(
+                f"Images cannot be loaded from {self.path}. Expecting path full of images: {IMAGE_EXTENSIONS}"
+            )
+
     def get_torchvision_dataset(self):
         """Use torchvision.datasets"""
+        print(f"Getting torchvision dataset: {self.path}", file=sys.stderr)
 
         self.dataset_name = self.path
-        self.files = [] # empty list, as torchvision.datasets has various different formats
+        self.files = []  # empty list, as torchvision.datasets has various different formats
         try:
             torchvision_dataset = getattr(torchvision.datasets, self.dataset_name)
 
         except:
-            raise RuntimeError(f'{self.dataset_name} is not a dataset in torchvision')
+            raise RuntimeError(f"{self.dataset_name} is not a dataset in torchvision")
 
         else:
-            self.data_set = torchvision_dataset(root=TORCHVISION_DATA_PATH,
-                                                train=self.train_set,
-                                                transform=self.transform,
-                                                download=True)
+            self.data_set = torchvision_dataset(
+                root=TORCHVISION_DATA_PATH,
+                train=self.train_set,
+                transform=self.transform,
+                download=True,
+            )
 
     def subsample_dataset(self):
         """subsample to desired size"""
 
-        np.random.seed(self.seed) # for consistent subsampling of datasets across runs
+        np.random.seed(self.seed)  # for consistent subsampling of datasets across runs
 
         if self.random_sample:
-            self.inds_keep = sorted(np.random.choice(len(self.data_set), self.nsample, replace=self.sample_w_replacement))
+            self.inds_keep = sorted(
+                np.random.choice(
+                    len(self.data_set),
+                    self.nsample,
+                    replace=self.sample_w_replacement,
+                )
+            )
         else:
             self.inds_keep = np.arange(self.nsample)
 
         if self.files:
             self.files = [self.files[i] for i in self.inds_keep]
 
-        if self.labels is not None and len(self.labels)>0:
+        if self.labels is not None and len(self.labels) > 0:
             self.labels = self.labels[self.inds_keep]
-        self.data_set = torch.utils.data.Subset(self.data_set,
-                                                self.inds_keep,
-                                                )
+        self.data_set = torch.utils.data.Subset(
+            self.data_set,
+            self.inds_keep,
+        )
 
     def get_dataloader(self):
         """
-        Create dataloader from dataset
+        Create dataloader(s) from dataset and assign to self.data_loader.
+
+        If self.per_label is True and self.labels is not None/empty, builds
+        one torch DataLoader per unique label, plus an overall one. The result
+        stored on self.data_loader is a list of length N+1 such that:
+            self.data_loader[i] for i in 0..N-1 -> loader over items with
+                                                    label self.label_values[i]
+            self.data_loader[-1]                -> overall loader (all items)
+
+        Otherwise self.data_loader is a single torch DataLoader over all items.
         """
-        self.nimages = len(self.data_set) 
+        self.nimages = len(self.data_set)
         if self.batch_size > self.nimages:
-            print(('Warning: batch size is bigger than the data size. '
-                   'Setting batch size to data size'))
+            print(
+                (
+                    "Warning: batch size is bigger than the data size. "
+                    "Setting batch size to data size"
+                )
+            )
             self.batch_size = self.nimages
 
-        self.data_loader = torch.utils.data.DataLoader(self.data_set,
-                                             batch_size=self.batch_size,
-                                             shuffle=False,
-                                             drop_last=False,
-                                             num_workers=self.num_workers)
+        def _make(data):
+            return torch.utils.data.DataLoader(
+                data,
+                batch_size=self.batch_size,
+                shuffle=False,
+                drop_last=False,
+                num_workers=self.num_workers,
+            )
+
+        overall = _make(self.data_set)
+        self.label_values = None
+
+        if not self.per_label or self.labels is None or len(self.labels) == 0:
+            self.data_loader = [overall]
+            return
+
+        labels_arr = np.asarray(self.labels)
+        self.label_values = np.unique(labels_arr).tolist()
+
+        per_label_loaders = []
+        for label_i in self.label_values:
+            inds = np.where(labels_arr == label_i)[0].tolist()
+            per_label_loaders.append(
+                _make(torch.utils.data.Subset(self.data_set, inds))
+            )
+
+        self.data_loader = [overall] + per_label_loaders
+
+    def __str__(self):
+        return (
+            f"DataLoader for path {self.path}\n"
+            f"\tdataset name {self.dataset_name}\n"
+            f"\timages {len(self.data_set)}\n"
+            f"\tbatch size {self.batch_size}\n"
+            f"\tdataloaders: {len(self.data_loader)}, overall at index 0\n"
+            f"\tlabels {self.label_values}\n"
+            f"\timg/dl: {[len(dl.dataset) for dl in self.data_loader]}"
+        )
 
 
-def get_dataloader(path, nsample=-1, batch_size=32, num_workers=1, transform=None, seed=13579, random_sample=True, sample_w_replacement=False):
+def get_dataloader(
+    path,
+    nsample=-1,
+    batch_size=32,
+    num_workers=1,
+    transform=None,
+    seed=13579,
+    random_sample=True,
+    sample_w_replacement=False,
+    per_label=False,
+):
     """Deal with format of input path, and get relevant DataLoader"""
 
-    train_str='test'
-    if '--' in path:
+    train_str = "test"
+    if "--" in path:
         # Path is instead torchvision.dataset
         # e.g. CIFAR10--train, MNIST--test, etc.
-        path, train_str = path.split('--')
+        path, train_str = path.split("--")
 
-    train_set = True if train_str.upper()=='TRAIN' else False
+    train_set = True if train_str.upper() == "TRAIN" else False
 
-    DL = DataLoader(path, train_set=train_set, nsample=nsample,
-                    batch_size=batch_size, num_workers=num_workers,
-                    transform=transform, seed=seed,
-                    random_sample=random_sample, sample_w_replacement=sample_w_replacement)
+    DL = DataLoader(
+        path,
+        train_set=train_set,
+        nsample=nsample,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        transform=transform,
+        seed=seed,
+        random_sample=random_sample,
+        sample_w_replacement=sample_w_replacement,
+        per_label=per_label,
+    )
 
     return DL
+
+
+def get_dataloader_from_path(
+    path,
+    model_transform,
+    num_workers,
+    args,
+    sample_w_replacement=False,
+):
+    print(f"\nGetting DataLoader for path: {path}", file=sys.stderr)
+
+    dataloader = get_dataloader(
+        path,
+        args.nsample,
+        args.batch_size,
+        num_workers,
+        seed=args.seed,
+        sample_w_replacement=sample_w_replacement,
+        transform=lambda x: model_transform(x),
+        per_label=args.per_label,
+    )
+
+    print(dataloader)
+    return dataloader

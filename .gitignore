@@ -1,0 +1,21 @@
+# Personal
+data/
+!data/human-evaluation-realism
+!data/imagenet-labels.yml
+!data/times-new-roman.ttf
+
+experiments/
+
+notebooks/
+!notebooks/l2_memorization_check.ipynb
+
+scripts/test.sh
+
+
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info

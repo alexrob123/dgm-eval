@@ -1,124 +1,244 @@
 import os
 import pathlib
-from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
 import sys
+from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
 
 import numpy as np
 import pandas as pd
 import torch
-from .dataloaders import get_dataloader
-from .metrics import *
-from .models import load_encoder, InceptionEncoder, MODELS
-from .representations import get_representations, load_reps_from_path, save_outputs
 
+from .dataloaders import get_dataloader, get_dataloader_from_path
 from .heatmaps import visualize_heatmaps
+from .infra import get_device_and_num_workers
+from .metrics import (
+    compute_authpct,
+    compute_CTscore,
+    compute_CTscore_mem,
+    compute_CTscore_mode,
+    compute_efficient_FD_with_reps,
+    compute_FD_infinity,
+    compute_FD_with_reps,
+    compute_fls,
+    compute_fls_overfit,
+    compute_inception_score,
+    compute_mmd,
+    compute_per_class_vendi_scores,
+    compute_prdc,
+    sw_approx,
+)
+from .models import MODELS, load_encoder
+from .representations import get_reps, load_reps, save_reps
+from .samples import save_samples
 
 parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
 
-parser.add_argument('--model', type=str, default='dinov2', choices=MODELS.keys(),
-                    help='Model to use for generating feature representations.')
-
-parser.add_argument('--train_dataset', type=str, default='imagenet',
-                    help='Dataset that model was trained on. Sets proper normalization for MAE.')
-
-parser.add_argument('-bs', '--batch_size', type=int, default=50,
-                    help='Batch size to use')
-
-parser.add_argument('--num-workers', type=int,
-                    help='Number of processes to use for data loading. '
-                         'Defaults to `min(8, num_cpus)`')
-
-parser.add_argument('--device', type=str, default=None,
-                    help='Device to use. Like cuda, cuda:0 or cpu')
-
-parser.add_argument('--nearest_k', type=int, default=5,
-                    help='Number of neighbours for precision, recall, density, and coverage')
-
-parser.add_argument('--reduced_n', type=int, default=10000,
-                    help='Number of samples used for train, baseline, test, and generated sets for FLS')
-
-parser.add_argument('--nsample', type=int, default=50000,
-                    help='Maximum number of images to use for calculation')
-
-parser.add_argument('path', type=str, nargs='+',
-                    help='Paths to the images, the first one is the real dataset, followed by generated')
-
-parser.add_argument('--test_path', type=str, default=None,
-                    help=('Path to test images'))
-
-parser.add_argument('--metrics', type=str, nargs='+', default=['fd', 'fd-infinity', 'kd', 'prdc',
-                                                               'is', 'authpct', 'ct', 'ct_test', 'ct_modified', 
-                                                               'fls', 'fls_overfit', 'vendi', 'sw_approx'],
-                    help="metrics to compute")
-
-parser.add_argument('-ckpt', '--checkpoint', type=str, default=None,
-                    help='Path of model checkpoint.')
-
-parser.add_argument('--arch', type=str, default=None,
-                    help='Model architecture. If none specified use default specified in model class')
-
-parser.add_argument('--heatmaps', action='store_true',
-                    help='Generate heatmaps showing the fd focus on images.')
-
-parser.add_argument('--heatmaps-perturbation', action='store_true',
-                    help='Add some perturbation to the images on which gradcam is applied.')
-
-parser.add_argument('--splits', type=int, default=10, help="num of splits for Inception Score(is)")
-
-parser.add_argument('--output_dir', type=str, default='experiments/',
-                    help='Directory to save outputs in')
-
-parser.add_argument('--save', action='store_true',
-                    help='Save representations to output_dir')
-
-parser.add_argument('--load', action='store_true',
-                    help='Load representations and statistics from previous runs if possible')
-
-parser.add_argument('--no-load', action='store_false', dest='load',
-                    help='Do not load representations and statistics from previous runs.')
+# Data args
+parser.add_argument(
+    "--train",
+    type=str,
+    help="Paths to the images: real dataset.",
+)
+parser.add_argument(
+    "--gen",
+    type=str,
+    nargs="+",
+    help="Paths to the images, generated dataset.",
+)
+parser.add_argument(
+    "--train_dataset",
+    type=str,
+    default="imagenet",
+    help="Dataset that model was trained on. Sets proper normalization for MAE.",
+)
+parser.add_argument(
+    "--test_path",
+    type=str,
+    default=None,
+    help=("Path to test images"),
+)
+parser.add_argument(
+    "--nsample",
+    type=int,
+    default=50_000,
+    help="Maximum number of images to use for calculation",
+)
+parser.add_argument(
+    "--clean_resize",
+    action="store_true",
+    help="Use clean resizing (from pillow)",
+)
+# Metrics args
+parser.add_argument(
+    "--metrics",
+    type=str,
+    nargs="+",
+    default=[
+        "fd",
+        "fd-infinity",
+        "kd",
+        "prdc",
+        "is",
+        "authpct",
+        "ct",
+        "ct_test",
+        "ct_modified",
+        "fls",
+        "fls_overfit",
+        "vendi",
+        "sw_approx",
+    ],
+    help="metrics to compute",
+)
+parser.add_argument(
+    "--per-label",
+    action="store_true",
+    help="Whether to compute metrics per label. Only implemented for prdc and vendi currently.",
+)
+parser.add_argument(
+    "--splits",
+    type=int,
+    default=10,
+    help="num of splits for Inception Score(is)",
+)
+parser.add_argument(
+    "--nearest_k",
+    type=int,
+    default=5,
+    help="Number of neighbours for precision, recall, density, and coverage",
+)
+parser.add_argument(
+    "--reduced_n",
+    type=int,
+    default=10_000,
+    help="Number of samples used for train, baseline, test, and generated sets for FLS",
+)
+# Model args
+parser.add_argument(
+    "--model",
+    type=str,
+    default="dinov2",
+    choices=MODELS.keys(),
+    help="Model to use for generating feature representations.",
+)
+parser.add_argument(
+    "--arch",
+    type=str,
+    default=None,
+    help="Model architecture. If none specified use default specified in model class",
+)
+parser.add_argument(
+    "-ckpt",
+    "--checkpoint",
+    type=str,
+    default=None,
+    help="Path of model checkpoint.",
+)
+parser.add_argument(
+    "--load",
+    action="store_true",
+    help="Load representations and statistics from previous runs if possible",
+)
 parser.set_defaults(load=True)
+parser.add_argument(
+    "--no-load",
+    action="store_false",
+    dest="load",
+    help="Do not load representations and statistics from previous runs.",
+)
+parser.add_argument(
+    "--depth",
+    type=int,
+    default=0,
+    help="Negative depth for internal layers, positive 1 for after projection head.",
+)
+# DataLoader args
+parser.add_argument(
+    "-bs",
+    "--batch_size",
+    type=int,
+    default=50,
+    help="Batch size to use",
+)
+parser.add_argument(
+    "--num-workers",
+    type=int,
+    help="Number of processes to use for data loading. Defaults to `min(8, num_cpus)`",
+)
+# Heatmaps args
+parser.add_argument(
+    "--heatmaps",
+    action="store_true",
+    help="Generate heatmaps showing the fd focus on images.",
+)
+parser.add_argument(
+    "--heatmaps-perturbation",
+    action="store_true",
+    help="Add some perturbation to the images on which gradcam is applied.",
+)
+# Randomness and device args
+parser.add_argument(
+    "--device",
+    type=str,
+    default=None,
+    help="Device to use. Like cuda, cuda:0 or cpu",
+)
+parser.add_argument(
+    "--seed",
+    type=int,
+    default=13579,
+    help="Random seed",
+)
+# Output args
+parser.add_argument(
+    "--save",
+    action="store_true",
+    help="Save representations to output_dir",
+)
+parser.add_argument(
+    "--save-imgs",
+    action="store_true",
+    dest="save_imgs",
+    help="Saves sample images per dataset.",
+)
+parser.add_argument(
+    "--output-dir",
+    type=str,
+    default="experiments/",
+    help="Directory to save outputs in",
+)
 
-parser.add_argument('--seed', type=int, default=13579,
-                    help='Random seed')
 
-parser.add_argument('--clean_resize', action='store_true',
-                    help='Use clean resizing (from pillow)')
+# def extend_path(p):
+#     base = os.path.basename(p)
+#     parent = os.path.dirname(p)
+#     parent_base = os.path.basename(parent)
 
-parser.add_argument('--depth', type=int, default=0,
-                    help='Negative depth for internal layers, positive 1 for after projection head.')
+#     if parent_base in ("train", "test"):
+#         grandparent_base = os.path.basename(os.path.dirname(parent))
+#         return grandparent_base + "-" + parent_base + "-" + base
 
+#     if base.isdigit():
+#         return parent_base + "-" + base
 
-def get_device_and_num_workers(device, num_workers):
-    if device is None:
-        device = torch.device('cuda' if (torch.cuda.is_available()) else 'cpu')
-    else:
-        device = torch.device(device)
-
-    if num_workers is None:
-        try:
-            # os. generally works on unix systems
-            num_avail_cpus = len(os.sched_getaffinity(0))
-        except:
-            # Windows or other systems do not support os.sched_getaffinity. 
-            # And dataloader can have issues with num_workers>0.
-            # https://discuss.pytorch.org/t/eoferror-ran-out-of-input-when-enumerating-the-train-loader/22692/7
-            print(f'\nWarning: os.sched_getaffinity error. Limited number of CPUs/workers used.\n', file=sys.stderr)
-            num_avail_cpus = 0
-        num_workers = min(num_avail_cpus, 8)
-    else:
-        num_workers = num_workers
-
-    return device, num_workers
+#     return base
 
 
-def get_dataloader_from_path(path, model_transform, num_workers, args, sample_w_replacement=False):
-    print(f'Getting DataLoader for path: {path}\n', file=sys.stderr)
+def extend_path(p):
+    parts = []
+    current = p
 
-    dataloader = get_dataloader(path, args.nsample, args.batch_size, num_workers, seed=args.seed,
-                                sample_w_replacement=sample_w_replacement,
-                                transform=lambda x: model_transform(x))
+    while True:
+        base = os.path.basename(current)
+        parent = os.path.dirname(current)
 
-    return dataloader
+        parts.append(base)
+
+        if base.isdigit() or base in ("train", "test"):
+            current = parent
+        else:
+            break
+
+    return "-".join(reversed(parts))
 
 
 def compute_representations(DL, model, device, args):
@@ -129,245 +249,479 @@ def compute_representations(DL, model, device, args):
     Returns:
         repsi: float32 (Nimage, ndim)
     """
+    print(f"\nGetting representations for dataset: {DL.dataset_name}", file=sys.stderr)
+    reps_dir = os.path.join(args.output_dir, "data", DL.dataset_name, "reps")
 
-    if args.load:
-        print(f'Loading saved representations from: {args.output_dir}\n', file=sys.stderr)
-        repsi = load_reps_from_path(args.output_dir, args.model, None, DL)
-        if repsi is not None: 
-            return repsi
+    reps = []
+    for i, dl in enumerate(DL.data_loader):
+        label = "overall" if i == 0 else f"label-{i - 1}"
+        repsi = None
 
-        print(f'No saved representations found: {args.output_dir}\n', file=sys.stderr)
+        if args.load:
+            repsi = load_reps(reps_dir, args.model, None, dl, label=label)
+            if repsi is not None:
+                reps.append(repsi)
+                continue
 
-    print('Calculating Representations\n', file=sys.stderr)
-    repsi = get_representations(model, DL, device, normalized=False)
-    if args.save:
-        print(f'Saving representations to {args.output_dir}\n', file=sys.stderr)
-        save_outputs(args.output_dir, repsi, args.model, None, DL)
-    return repsi
+        if repsi is None:
+            print("Calculating reps...", file=sys.stderr)
+            repsi = get_reps(model, dl, device, normalized=False)
+            reps.append(repsi)
+
+            if args.save:
+                print(f"Saving reps to {reps_dir}", file=sys.stderr)
+
+                hparams = vars(DL).copy()
+                # Remove keys that can't be pickled
+                hparams.pop("transform")
+                hparams.pop("data_loader")
+                hparams.pop("data_set")
+
+                save_reps(
+                    reps_dir,
+                    repsi,
+                    args.model,
+                    None,
+                    dl,
+                    label=label,
+                    hparams=hparams,
+                )
+
+    return reps
 
 
-def compute_scores(args, reps, test_reps, labels=None):
+def compute_scores(args, reps_r, reps_g, test_reps, labels=None):
+    """
+    reps: list of two arrays corresponding to real reps and gen reps, each of shape (Nimage, ndim)
+    labels: array of shape (Nimage,) with class labels for generated samples, if available
+    """
 
-    scores={}
+    assert len(reps_r) == len(reps_g), "Num of real reps and real labels must match"
+
+    all_scores = {}
     vendi_scores = None
 
-    if 'fd' in args.metrics:
-        print("Computing FD \n", file=sys.stderr)
-        scores['fd'] = compute_FD_with_reps(*reps)
+    for i, (rr, rg) in enumerate(zip(reps_r, reps_g)):
+        label = "overall" if i == 0 else f"label-{i - 1}"
+        print(f"\n--- {label} ---", file=sys.stderr)
+        print(
+            f"samples with shapes {rr.shape} and {rg.shape}\n",
+            file=sys.stderr,
+        )
+        scores = {}
 
-    if 'fd_eff' in args.metrics:
-        print("Computing Efficient FD \n", file=sys.stderr)
-        scores['fd_eff'] = compute_efficient_FD_with_reps(*reps)
+        if "fd" in args.metrics and i == 0:
+            print("Computing FD \n", file=sys.stderr)
+            scores["fd"] = compute_FD_with_reps(rr, rg)
 
-    if 'fd-infinity' in args.metrics:
-        print("Computing fd-infinity \n", file=sys.stderr)
-        scores['fd_infinity_value'] = compute_FD_infinity(*reps)
+        if "fd_eff" in args.metrics and i == 0:
+            print("Computing Efficient FD \n", file=sys.stderr)
+            scores["fd_eff"] = compute_efficient_FD_with_reps(rr, rg)
 
-    if 'kd' in args.metrics:
-        print("Computing KD \n", file=sys.stderr)
-        mmd_values = compute_mmd(*reps)
-        scores['kd_value'] = mmd_values.mean()
-        scores['kd_variance'] = mmd_values.std()
+        if "fd-infinity" in args.metrics and i == 0:
+            print("Computing fd-infinity \n", file=sys.stderr)
+            scores["fd_infinity_value"] = compute_FD_infinity(rr, rg)
 
-    if 'prdc' in args.metrics:
-        print("Computing precision, recall, density, and coverage \n", file=sys.stderr)
-        reduced_n = min(args.reduced_n, reps[0].shape[0], reps[1].shape[0])
-        inds0 = np.random.choice(reps[0].shape[0], reduced_n, replace=False)
+        if "kd" in args.metrics and i == 0:
+            print("Computing KD \n", file=sys.stderr)
+            mmd_values = compute_mmd(rr, rg)
+            scores["kd_value"] = mmd_values.mean()
+            scores["kd_variance"] = mmd_values.std()
 
-        inds1 = np.arange(reps[1].shape[0])
-        if 'realism' not in args.metrics:
-            # Realism is returned for each sample, so do not shuffle if this metric is desired.
-            # Else filenames and realism scores will not align
-            inds1 = np.random.choice(inds1, min(inds1.shape[0], reduced_n), replace=False)
+        if "prdc" in args.metrics:  # compute for all labels
+            print("Computing PRDC", file=sys.stderr)
 
-        prdc_dict = compute_prdc(
-            reps[0][inds0], 
-            reps[1][inds1], 
-            nearest_k=args.nearest_k,
-            realism=True if 'realism' in args.metrics else False)
-        scores = dict(scores, **prdc_dict)
+            reduced_n = min(args.reduced_n, rr.shape[0], rg.shape[0])
+            inds0 = np.random.choice(rr.shape[0], reduced_n, replace=False)
 
-    if 'vendi' in args.metrics:
-        print("Calculating diversity score", file=sys.stderr)
-        # scores['vendi'] = compute_vendi_score(reps[1])
-        vendi_scores = compute_per_class_vendi_scores(reps[1], labels)
-        scores['mean vendi per class'] = vendi_scores.mean()
+            inds1 = np.arange(rg.shape[0])
+            if "realism" not in args.metrics:
+                # Realism is returned for each sample, so do not shuffle if this metric is desired.
+                # Else filenames and realism scores will not align
+                inds1 = np.random.choice(
+                    inds1,
+                    min(inds1.shape[0], reduced_n),
+                    replace=False,
+                )
 
-    if 'authpct' in args.metrics:
-        print("Computing authpct \n", file=sys.stderr)
-        scores['authpct'] = compute_authpct(*reps)
+            prdc_dict = compute_prdc(
+                rr[inds0],
+                rg[inds1],
+                nearest_k=args.nearest_k,
+                realism=True if "realism" in args.metrics else False,
+            )
+            scores.update(prdc_dict)
 
-    if 'sw_approx' in args.metrics:
-        print('Aprroximating Sliced W2.', file=sys.stderr)
-        scores['sw_approx'] = sw_approx(*reps)
+        if "vendi" in args.metrics and i == 0:
+            print("Calculating diversity score", file=sys.stderr)
+            # scores['vendi'] = compute_vendi_score(reps[1])
+            vendi_scores = compute_per_class_vendi_scores(rg, labels[1])
+            scores["mean vendi per class"] = vendi_scores.mean()
 
-    if 'ct' in args.metrics:
-        print("Computing ct score \n", file=sys.stderr)
-        scores['ct'] = compute_CTscore(reps[0], test_reps, reps[1])
+        if "authpct" in args.metrics and i == 0:
+            print("Computing authpct \n", file=sys.stderr)
+            scores["authpct"] = compute_authpct(rr, rg)
 
-    if 'ct_test' in args.metrics:
-        print("Computing ct score, modified to identify mode collapse only \n", file=sys.stderr)
-        scores['ct_test'] = compute_CTscore_mode(reps[0], test_reps, reps[1])
+        if "sw_approx" in args.metrics and i == 0:
+            print("Aprroximating Sliced W2.", file=sys.stderr)
+            scores["sw_approx"] = sw_approx(rr, rg)
 
-    if 'ct_modified' in args.metrics:
-        print("Computing ct score, modified to identify memorization only \n", file=sys.stderr)
-        scores['ct_modified'] = compute_CTscore_mem(reps[0], test_reps, reps[1])
+        if "ct" in args.metrics and i == 0:
+            print("Computing ct score \n", file=sys.stderr)
+            scores["ct"] = compute_CTscore(rr, test_reps, rg)
 
-    if 'fls' in args.metrics or 'fls_overfit' in args.metrics:
-        train_reps, gen_reps = reps[0], reps[1]
-        reduced_n = min(args.reduced_n, train_reps.shape[0]//2, test_reps.shape[0], gen_reps.shape[0])
+        if "ct_test" in args.metrics and i == 0:
+            print(
+                "Computing ct score, modified to identify mode collapse only \n",
+                file=sys.stderr,
+            )
+            scores["ct_test"] = compute_CTscore_mode(rr, test_reps, rg)
 
-        test_reps = test_reps[np.random.choice(test_reps.shape[0], reduced_n, replace=False)]
-        gen_reps = gen_reps[np.random.choice(gen_reps.shape[0], reduced_n, replace=False)]
+        if "ct_modified" in args.metrics and i == 0:
+            print(
+                "Computing ct score, modified to identify memorization only \n",
+                file=sys.stderr,
+            )
+            scores["ct_modified"] = compute_CTscore_mem(rr, test_reps, rg)
 
-        print("Computing fls \n", file=sys.stderr)
-        # fls must be after ot, as it changes train_reps
-        train_reps = train_reps[np.random.choice(train_reps.shape[0], 2*reduced_n, replace=False)]
-        train_reps, baseline_reps = train_reps[:reduced_n], train_reps[reduced_n:]
+        if "fls" in args.metrics or "fls_overfit" in args.metrics and i == 0:
+            train_reps, gen_reps = rr, rg
+            reduced_n = min(
+                args.reduced_n,
+                train_reps.shape[0] // 2,
+                test_reps.shape[0],
+                gen_reps.shape[0],
+            )
 
-        if 'fls' in args.metrics:
-            scores['fls'] = compute_fls(train_reps, baseline_reps, test_reps, gen_reps)
-        if 'fls_overfit' in args.metrics:
-            scores['fls_overfit'] = compute_fls_overfit(train_reps, baseline_reps, test_reps, gen_reps)
+            test_reps = test_reps[
+                np.random.choice(test_reps.shape[0], reduced_n, replace=False)
+            ]
+            gen_reps = gen_reps[
+                np.random.choice(gen_reps.shape[0], reduced_n, replace=False)
+            ]
 
-    for key, value in scores.items():
-        if key=='realism': continue
-        print(f'{key}: {value:.5f}\n')
+            print("Computing fls \n", file=sys.stderr)
+            # fls must be after ot, as it changes train_reps
+            train_reps = train_reps[
+                np.random.choice(train_reps.shape[0], 2 * reduced_n, replace=False)
+            ]
+            train_reps, baseline_reps = train_reps[:reduced_n], train_reps[reduced_n:]
 
-    return scores, vendi_scores
+            if "fls" in args.metrics:
+                scores["fls"] = compute_fls(
+                    train_reps,
+                    baseline_reps,
+                    test_reps,
+                    gen_reps,
+                )
+            if "fls_overfit" in args.metrics:
+                scores["fls_overfit"] = compute_fls_overfit(
+                    train_reps,
+                    baseline_reps,
+                    test_reps,
+                    gen_reps,
+                )
+
+        for key, value in scores.items():
+            if key != "realism":
+                print(f"{key}: {value:.5f}", file=sys.stderr)
+
+        all_scores[label] = scores
+
+    return all_scores, vendi_scores
 
 
 def save_score(scores, output_dir, model, path, ckpt, nsample, is_only=False):
 
-    ckpt_str = ''
+    ckpt_str = ""
     if ckpt is not None:
-        ckpt_str = f'_ckpt-{os.path.splitext(os.path.basename(ckpt))[0]}'
+        ckpt_str = f"_ckpt-{os.path.splitext(os.path.basename(ckpt))[0]}"
 
     if is_only:
-        out_str = f"Inception_score_{'-'.join([os.path.basename(p) for p in path])}{ckpt_str}_nimage-{nsample}.txt"
+        out_str = f"Inception_score_{'-'.join([extend_path(p) for p in path])}{ckpt_str}_nimage-{nsample}.txt"
     else:
-        out_str = f"fd_{model}_{'-'.join([os.path.basename(p) for p in path])}{ckpt_str}_nimage-{nsample}.txt"
+        out_str = f"fd_{model}_{'-'.join([extend_path(p) for p in path])}{ckpt_str}_nimage-{nsample}.txt"
 
     out_path = os.path.join(output_dir, out_str)
     pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-    with open(out_path, 'w') as f:
+    with open(out_path, "w") as f:
         for key, value in scores.items():
-            if key=='realism': continue
+            if key == "realism":
+                continue
             f.write(f"{key}: {value} \n")
 
 
 def save_scores(scores, args, is_only=False, vendi_scores={}):
 
-    pathlib.Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    results_dir = os.path.join(args.output_dir, "results")
+    pathlib.Path(results_dir).mkdir(parents=True, exist_ok=True)
 
     run_params = vars(args)
-    run_params['reference_dataset'] = run_params['path'][0]
-    run_params['test_datasets'] = run_params['path'][1:]
+    run_params["reference_dataset"] = run_params["train"]
+    run_params["generated_dataset"] = run_params["gen"]
 
-    ckpt_str = ''
+    ckpt_str = ""
     print(scores, file=sys.stderr)
 
-    if is_only: 
-        out_str = f'Inception_scores_nimage-{args.nsample}'
+    if is_only:
+        out_str = f"Inception_scores_nimage-{args.nsample}"
     else:
         out_str = f"{args.model}{ckpt_str}_scores_nimage-{args.nsample}"
-    out_path = os.path.join(args.output_dir, out_str)
+    out_path = os.path.join(results_dir, out_str)
 
-    np.savez(f'{out_path}.npz', scores=scores, run_params=run_params)
+    fname = f"{out_path}.npz"
+    print(f"Saving scores to {fname}\n", file=sys.stderr)
+    np.savez(fname, scores=scores, run_params=run_params)
 
-    if vendi_scores is not None and len(vendi_scores)>0:
+    if vendi_scores is not None and len(vendi_scores) > 0:
         df = pd.DataFrame.from_dict(data=vendi_scores)
         out_str = f"{args.model}{ckpt_str}_vendi_scores_nimage-{args.nsample}"
-        out_path = os.path.join(args.output_dir, out_str)
-        print(f'saving vendi score to {out_path}.csv')
-        df.to_csv(f'{out_path}.csv')
+        out_path = os.path.join(results_dir, out_str)
+        print(f"saving vendi score to {out_path}.csv", file=sys.stderr)
+        df.to_csv(f"{out_path}.csv")
+
 
 def get_inception_scores(args, device, num_workers):
     # The inceptionV3 with logit output is only used for calculate inception score
-    print(f'Computing Inception score with model = inception, ckpt=None, and dims=1008.', file=sys.stderr)
-    print('Loading Model', file=sys.stderr)
+    print(
+        "Computing Inception score with model = inception, ckpt=None, and dims=1008.",
+        file=sys.stderr,
+    )
+    print("Loading Model", file=sys.stderr)
 
     IS_scores = {}
-    model_IS = load_encoder('inception', device, ckpt=None,
-                        dims=1008, arch=None,
-                        pretrained_weights=None,
-                        train_dataset=None,
-                        clean_resize=args.clean_resize,
-                        depth=args.depth)
-    
+    model_IS = load_encoder(
+        "inception",
+        device,
+        ckpt=None,
+        dims=1008,
+        arch=None,
+        pretrained_weights=None,
+        train_dataset=None,
+        clean_resize=args.clean_resize,
+        depth=args.depth,
+    )
+
     for i, path in enumerate(args.path[1:]):
-        print(f'Getting DataLoader for path: {path}\n', file=sys.stderr)
-        dataloaderi = get_dataloader_from_path(args.path[i], model_IS.transform, num_workers, args)
-        print(f'Computing inception score for {path}\n', file=sys.stderr)
-        IS_score_i = compute_inception_score(model_IS, DataLoader=dataloaderi, splits=args.splits, device=device)
-        IS_scores[f'run{i:02d}'] = IS_score_i
+        print(f"\nGetting DataLoader for path: {path}\n", file=sys.stderr)
+        dataloaderi = get_dataloader_from_path(
+            args.path[i],
+            model_IS.transform,
+            num_workers,
+            args,
+        )
+        # dataloaderi.data_loader is a list
+        print(f"Computing inception score for {path}\n", file=sys.stderr)
+        IS_score_i = compute_inception_score(
+            model_IS,
+            DataLoader=dataloaderi,
+            splits=args.splits,
+            device=device,
+        )
+        IS_scores[f"run{i:02d}"] = IS_score_i
         print(IS_score_i)
     save_scores(IS_scores, args, is_only=True)
-    if len(args.metrics) == 1: sys.exit(0)
+    if len(args.metrics) == 1:
+        sys.exit(0)
 
     return IS_scores
 
-def main():
-    args = parser.parse_args()
+
+def extend_paths_with_subdirs(paths):
+    print("Extending paths to subdirs for metrics per label.")
+
+    extended_paths = [paths[0]]
+    for path_i in paths[1:]:
+        extended_paths.append(path_i)
+        subdirs = [os.path.join(path_i, subdir) for subdir in os.listdir(path_i)]
+        if subdirs:
+            extended_paths.extend(subdirs)
+    print(f"New paths: {extended_paths}")
+
+    return extended_paths
+
+
+# def get_dl_and_compute_reps(path, model, device, args, sample_w_replacement=False):
+#     dataloader = get_dataloader_from_path(
+#         path,
+#         model.transform,
+#         args.num_workers,
+#         args,
+#         sample_w_replacement=sample_w_replacement,
+#     )
+#     repsi = compute_representations(dataloader, model, device, args)
+#     return dataloader, repsi
+
+
+###################################################################################################
+###################################################################################################
+###################################################################################################
+
+
+def run(args):
+    print(
+        "\nRunning evaluation...\n"
+        "------------------------------------------------------------"
+        "\nArguments:\n"
+        f"\ttrain: {args.train}\n"
+        f"\tgen: {args.gen}\n"
+        f"\tmodel: {args.model}\n"
+    )
 
     device, num_workers = get_device_and_num_workers(args.device, args.num_workers)
 
-    IS_scores = None
-    if 'is' in args.metrics and args.model == 'inception':
-        # Does not require a reference dataset, so compute first.
-        IS_scores = get_inception_scores(args, device, num_workers)
-       
-    print('Loading Model', file=sys.stderr)
-    # Get train representations
-    model = load_encoder(args.model, device, ckpt=None, arch=None,
-                        clean_resize=args.clean_resize,
-                        sinception=True if args.model=='sinception' else False,
-                        depth=args.depth,
-                        )
-    dataloader_real = get_dataloader_from_path(args.path[0], model.transform, num_workers, args)
-    reps_real = compute_representations(dataloader_real, model, device, args)
+    # IS does not require a reference dataset, so compute first.
+    # IS_scores = None
+    # if "is" in args.metrics and args.model == "inception":
+    #     IS_scores = get_inception_scores(args, device, num_workers)
 
-    # Get test representations
+    # Move IS encoder here ?
+
+    # Encoder
+    model = load_encoder(
+        args.model,
+        device,
+        ckpt=None,
+        arch=None,
+        clean_resize=args.clean_resize,
+        sinception=True if args.model == "sinception" else False,
+        depth=args.depth,
+    )
+
+    # Train representations
+    dataloader_real = get_dataloader_from_path(
+        args.train,
+        model.transform,
+        num_workers,
+        args,
+    )  # list
+    reps_real = compute_representations(
+        dataloader_real,
+        model,
+        device,
+        args,
+    )  # list
+    labs_real = dataloader_real.labels
+
+    if args.save_imgs:
+        save_samples(args.output_dir, dataloader_real)
+
+    # Test representations
     repsi_test = None
     if args.test_path is not None:
-        dataloader_test = get_dataloader_from_path(args.test_path, model.transform, num_workers, args)
-
-        repsi_test = compute_representations(dataloader_test, model, device, args)
+        dataloader_test = get_dataloader_from_path(
+            args.test_path,
+            model.transform,
+            num_workers,
+            args,
+        )  # list
+        repsi_test = compute_representations(
+            dataloader_test,
+            model,
+            device,
+            args,
+        )  # list
 
     # Loop over all generated paths
     all_scores = {}
     vendi_scores = {}
-    for i, path in enumerate(args.path[1:]):
 
-        dataloaderi = get_dataloader_from_path(path, model.transform, num_workers, args,
-                                               sample_w_replacement=True if ':train' in path else False)
-        repsi = compute_representations(dataloaderi, model, device, args)
-        reps = [reps_real, repsi]
+    for i, path in enumerate(args.gen):
+        dataloader_i = get_dataloader_from_path(
+            path,
+            model.transform,
+            num_workers,
+            args,
+            sample_w_replacement=True if "train" in path else False,
+        )  # list
+        reps_i = compute_representations(
+            dataloader_i,
+            model,
+            device,
+            args,
+        )  # list
+        labs_i = dataloader_i.labels
 
-        print(f'Computing scores between reference dataset and {path}\n', file=sys.stderr)
-        scores_i, vendi_scores_i = compute_scores(args, reps, repsi_test, dataloaderi.labels)
+        if args.save_imgs:
+            save_samples(args.output_dir, dataloader_i)
+
+        labels = [labs_real, labs_i]
+
+        print(f"\nComputing scores between ref dataset and {path}\n", file=sys.stderr)
+        scores_i, vendi_scores_i = compute_scores(
+            args,
+            reps_real,
+            reps_i,
+            repsi_test,
+            labels=labels,
+        )
         if vendi_scores_i is not None:
             vendi_scores[os.path.basename(path)] = vendi_scores_i
 
-        print('Saving scores\n', file=sys.stderr)
+        print("\nSaving scores...", file=sys.stderr)
         save_score(
-            scores_i, args.output_dir, args.model, [args.path[0], path], None, args.nsample,
+            scores_i,
+            os.path.join(args.output_dir, "results"),
+            args.model,
+            [args.train, path],
+            None,
+            args.nsample,
         )
-        if IS_scores is not None:
-            scores_i.update(IS_scores[f'run{i:02d}'])
-        all_scores[f'run{i:02d}'] = scores_i
+        # if IS_scores is not None:
+        #     scores_i.update(IS_scores[f"run{i:02d}"])
+        all_scores[f"run{i:02d}"] = scores_i
 
         if args.heatmaps:
-            print('Visualizing FD gradient with gradcam\n', file=sys.stderr)
-            heatmap_suffix = f"{args.model}_{dataloader_real.dataset_name}_{dataloaderi.dataset_name}" + \
-                             f"{'_perturbation' if args.heatmaps_perturbation else ''}_{args.seed}"
-            visualize_heatmaps(reps_real, repsi, model, dataset=dataloaderi.data_set, results_dir=args.output_dir,
-                               results_suffix=heatmap_suffix, dataset_name=dataloaderi.dataset_name, device=device,
-                               perturbation=args.heatmaps_perturbation, random_seed=args.seed)
+            print("Visualizing FD gradient with gradcam\n", file=sys.stderr)
+            heatmap_suffix = (
+                f"{args.model}_{dataloader_real.dataset_name}_{dataloader_i.dataset_name}"
+                + f"{'_perturbation' if args.heatmaps_perturbation else ''}_{args.seed}"
+            )
+            visualize_heatmaps(
+                reps_real,
+                reps_i,
+                model,
+                dataset=dataloader_i.data_set,
+                results_dir=os.path.join(args.output_dir, "results"),
+                results_suffix=heatmap_suffix,
+                dataset_name=dataloader_i.dataset_name,
+                device=device,
+                perturbation=args.heatmaps_perturbation,
+                random_seed=args.seed,
+            )
     # save scores from all generated paths
     save_scores(all_scores, args, vendi_scores=vendi_scores)
 
 
-if __name__ == '__main__':
+def main():
+    args = parser.parse_args()
+
+    run(args)
+
+    # if args.per_label:
+    #     real_path = args.path[0]
+    #     real_subdirs = sorted(os.listdir(real_path))
+    #     real_labels = len(real_subdirs)
+    #     real_label_paths = [os.path.join(real_path, d) for d in real_subdirs]
+
+    #     gen_paths = args.path[1:]
+    #     ext_gen_paths = []
+    #     for path_i in gen_paths:
+    #         gen_subdirs = sorted(os.listdir(path_i))
+    #         gen_labels = len(gen_subdirs)
+
+    #         assert real_labels == gen_labels, (
+    #             f"Number of labels in real and generated datasets must match for per-label metrics. "
+    #             f"Found {real_labels} and {gen_labels} for {real_path} and {path_i} respectively."
+    #         )
+    #         ext_gen_paths.append([os.path.join(path_i, d) for d in gen_subdirs])
+
+    #     for i, real_p in enumerate(real_label_paths):
+    #         gen_p = [ext_gen_paths[j][i] for j in range(len(gen_paths))]
+    #         args.path = [real_p] + gen_p
+    #         run(args)
+
+
+if __name__ == "__main__":
     main()
