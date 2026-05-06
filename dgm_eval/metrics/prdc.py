@@ -56,14 +56,15 @@ def compute_nearest_neighbour_distances(input_features, nearest_k):
     return radii
 
 
-def compute_prdc(real_features, fake_features, nearest_k, realism=False):
+def compute_prdc(real_features, fake_features, nearest_k=None, realism=False):
     """
     Computes precision, recall, density, and coverage given two manifolds.
 
     Args:
         real_features: numpy.ndarray([N, feature_dim], dtype=np.float32)
         fake_features: numpy.ndarray([N, feature_dim], dtype=np.float32)
-        nearest_k: int.
+        nearest_k: int. If None, set to sqrt of number of samples used for calculation.
+        realism: bool. If True, compute realism score.
     Returns:
         dict of precision, recall, density, and coverage.
     """
@@ -75,6 +76,13 @@ def compute_prdc(real_features, fake_features, nearest_k, realism=False):
         ),
         file=sys.stderr,
     )
+
+    if nearest_k is None:
+        nearest_k = int(np.sqrt(real_features.shape[0]))
+        print(
+            f"k is None. Setting it to sqrt of num samples: {nearest_k}",
+            file=sys.stderr,
+        )
 
     real_nearest_neighbour_distances = compute_nearest_neighbour_distances(
         real_features,
