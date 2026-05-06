@@ -100,6 +100,7 @@ class DataLoader:
         random_sample=True,
         sample_w_replacement=False,
         per_label=False,
+        randomize_labels=False,
     ):
 
         self.path = path
@@ -112,6 +113,7 @@ class DataLoader:
         # for class conditional models, remember the labels as loading
         self.labels = []
         self.per_label = per_label
+        self.randomize_labels = randomize_labels
 
         self.random_sample = random_sample
         self.sample_w_replacement = sample_w_replacement
@@ -294,14 +296,20 @@ class DataLoader:
             )
 
         overall = _make(self.data_set)
-        self.label_values = None
+        if self.labels is not None:
+            self.label_values = np.unique(self.labels).tolist()
+        else:
+            self.label_values = None
 
         if not self.per_label or self.labels is None or len(self.labels) == 0:
             self.data_loader = [overall]
             return
 
         labels_arr = np.asarray(self.labels)
-        self.label_values = np.unique(labels_arr).tolist()
+        if self.randomize_labels:
+            print("Randomizing labels for all items in dataset")
+            rng = np.random.default_rng(self.seed)
+            labels_arr = rng.permutation(labels_arr)
 
         per_label_loaders = []
         for label_i in self.label_values:
@@ -334,6 +342,7 @@ def get_dataloader(
     random_sample=True,
     sample_w_replacement=False,
     per_label=False,
+    randomize_labels=False,
 ):
     """Deal with format of input path, and get relevant DataLoader"""
 
@@ -356,6 +365,7 @@ def get_dataloader(
         random_sample=random_sample,
         sample_w_replacement=sample_w_replacement,
         per_label=per_label,
+        randomize_labels=randomize_labels,
     )
 
     return DL
@@ -379,6 +389,7 @@ def get_dataloader_from_path(
         sample_w_replacement=sample_w_replacement,
         transform=lambda x: model_transform(x),
         per_label=args.per_label,
+        randomize_labels=True if args.xp == "randomize-labels" else False,
     )
 
     print(dataloader)
