@@ -9,6 +9,9 @@ experiments/
 notebooks/
 !notebooks/l2_memorization_check.ipynb
 
+out-data/
+out-latexify/
+
 scripts/test.sh
 
 

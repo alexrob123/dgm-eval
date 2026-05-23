@@ -105,7 +105,6 @@ def get_path(output_dir, model, checkpoint, dataloader, label=None):
         else f"_ckpt-{os.path.splitext(os.path.basename(checkpoint))[0]}"
     )
 
-    hparams_str = f"reps_{label}_{model}{ckpt_str}_nimage-{len(dataloader.dataset)}"
+    hparams_str = f"reps_{label}_{model}{ckpt_str}_nimgs-{len(dataloader.dataset)}"
     # _{train_str}
     return os.path.join(output_dir, hparams_str)
-

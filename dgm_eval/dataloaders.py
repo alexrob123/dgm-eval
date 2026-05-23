@@ -389,7 +389,7 @@ def get_dataloader_from_path(
         sample_w_replacement=sample_w_replacement,
         transform=lambda x: model_transform(x),
         per_label=args.per_label,
-        randomize_labels=True if args.xp == "randomize-labels" else False,
+        randomize_labels=True if args.xp == "random-labels" else False,
     )
 
     print(dataloader)

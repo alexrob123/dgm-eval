@@ -7,7 +7,7 @@ from torchvision.utils import save_image
 
 
 def save_samples(output_dir, DL, n=8):
-    samples_dir = os.path.join(output_dir, "data", DL.dataset_name, "samples")
+    samples_dir = os.path.join(output_dir, DL.dataset_name, "samples")
     pathlib.Path(samples_dir).mkdir(parents=True, exist_ok=True)
 
     for i, dl in enumerate(DL.data_loader):
