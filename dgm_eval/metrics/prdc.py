@@ -21,10 +21,11 @@ def compute_pairwise_distance(data_x, data_y=None):
     Returns:
         numpy.ndarray([N, N], dtype=np.float32) of pairwise distances.
     """
-    if data_y is None:
-        data_y = data_x
     dists = sklearn.metrics.pairwise_distances(
-        data_x, data_y, metric="euclidean", n_jobs=8
+        data_x,
+        data_y,
+        metric="euclidean",
+        n_jobs=1 if len(data_x) < 10_000 else -1,
     )
     return dists
 
@@ -43,7 +44,7 @@ def get_kth_value(unsorted, k, axis=-1):
     return kth_values
 
 
-def compute_nearest_neighbour_distances(input_features, nearest_k):
+def compute_NND(input_features, nearest_k):
     """
     Args:
         input_features: numpy.ndarray([N, feature_dim], dtype=np.float32)
@@ -69,50 +70,27 @@ def compute_prdc(real_features, fake_features, nearest_k=None, realism=False):
         dict of precision, recall, density, and coverage.
     """
 
-    print(
-        "Num real: {} Num fake: {}".format(
-            real_features.shape[0],
-            fake_features.shape[0],
-        ),
-        file=sys.stderr,
-    )
+    print(f"Num real: {real_features.shape[0]} Num fake: {fake_features.shape[0]}")
 
     if nearest_k is None:
         nearest_k = int(np.sqrt(real_features.shape[0]))
-        print(
-            f"k is None. Setting it to sqrt of num samples: {nearest_k}",
-            file=sys.stderr,
-        )
+        print(f"k is None. Setting it to sqrt of num samples: {nearest_k}")
+    else:
+        print(f"k: {nearest_k}")
 
-    real_nearest_neighbour_distances = compute_nearest_neighbour_distances(
-        real_features,
-        nearest_k,
-    )
-    fake_nearest_neighbour_distances = compute_nearest_neighbour_distances(
-        fake_features,
-        nearest_k,
-    )
+    real_NND = compute_NND(real_features, nearest_k)
+    fake_NND = compute_NND(fake_features, nearest_k)
     distance_real_fake = compute_pairwise_distance(real_features, fake_features)
 
-    precision = (
-        (distance_real_fake < np.expand_dims(real_nearest_neighbour_distances, axis=1))
-        .any(axis=0)
-        .mean()
-    )
-    recall = (
-        (distance_real_fake < np.expand_dims(fake_nearest_neighbour_distances, axis=0))
-        .any(axis=1)
-        .mean()
-    )
+    P = (distance_real_fake < np.expand_dims(real_NND, axis=1)).any(axis=0).mean()
+    R = (distance_real_fake < np.expand_dims(fake_NND, axis=0)).any(axis=1).mean()
 
-    density = (1.0 / float(nearest_k)) * (
-        distance_real_fake < np.expand_dims(real_nearest_neighbour_distances, axis=1)
+    D = (1.0 / float(nearest_k)) * (
+        distance_real_fake < np.expand_dims(real_NND, axis=1)
     ).sum(axis=0).mean()
-    coverage = (
-        distance_real_fake.min(axis=1) < real_nearest_neighbour_distances
-    ).mean()
+    C = (distance_real_fake.min(axis=1) < real_NND).mean()
 
-    d = dict(precision=precision, recall=recall, density=density, coverage=coverage)
+    d = dict(precision=P, recall=R, density=D, coverage=C)
 
     if realism:
         """
@@ -121,13 +99,10 @@ def compute_prdc(real_features, fake_features, nearest_k=None, realism=False):
         In other words, the maximum in Equation 3 is not taken over all φr ∈ Φr but only over 
         those φr whose associated hypersphere is smaller than the median.
         """
-        mask = real_nearest_neighbour_distances < np.median(
-            real_nearest_neighbour_distances
-        )
+        mask = real_NND < np.median(real_NND)
 
         d["realism"] = (
-            np.expand_dims(real_nearest_neighbour_distances[mask], axis=1)
-            / distance_real_fake[mask]
+            np.expand_dims(real_NND[mask], axis=1) / distance_real_fake[mask]
         ).max(axis=0)
 
     return d
