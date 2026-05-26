@@ -1,5 +1,6 @@
 import os
 import pathlib
+import sys
 
 import numpy as np
 import torch
@@ -11,6 +12,64 @@ except ImportError:
     # If tqdm is not available, provide a mock version of it
     def tqdm(x):
         return x
+
+####################################################################################################
+# Compute
+####################################################################################################
+
+
+def compute_reps(DL, model, device, args):
+    """
+    Load representations from disk if path exists,
+    else compute image representations using the specified encoder
+
+    Returns:
+        repsi: float32 (Nimage, ndim)
+    """
+    print(f"\nGetting representations for dataset: {DL.dataset_name}", file=sys.stderr)
+    reps_dir = os.path.join(
+        "./out-data",
+        DL.dataset_name,
+        "reps",
+        args.xp if args.xp in ["random-labels"] else "",
+    )
+
+    reps = []
+    for i, dl in enumerate(DL.data_loader):
+        label = "overall" if i == 0 else f"label-{i - 1}"
+        repsi = None
+
+        if args.load:
+            repsi = load_reps(reps_dir, args.model, None, dl, label=label)
+            if repsi is not None:
+                reps.append(repsi)
+                continue
+
+        if repsi is None:
+            print("Calculating reps...", file=sys.stderr)
+            repsi = get_reps(model, dl, device, normalized=False)
+            reps.append(repsi)
+
+            if args.save:
+                print(f"Saving reps to {reps_dir}", file=sys.stderr)
+
+                hparams = vars(DL).copy()
+                # Remove keys that can't be pickled
+                hparams.pop("transform")
+                hparams.pop("data_loader")
+                hparams.pop("data_set")
+
+                save_reps(
+                    reps_dir,
+                    repsi,
+                    args.model,
+                    None,
+                    dl,
+                    label=label,
+                    hparams=hparams,
+                )
+
+    return reps
 
 
 def get_reps(model, dataloader, device, normalized=False):
@@ -85,6 +144,11 @@ def load_reps(saved_dir, model, checkpoint, dataloader, label=None):
         saved_file = np.load(f"{save_path}.npz")
         reps = saved_file["reps"]
     return reps
+
+
+####################################################################################################
+# Save
+####################################################################################################
 
 
 def save_reps(output_dir, reps, model, checkpoint, dataloader, label, hparams):
