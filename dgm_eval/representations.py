@@ -32,6 +32,7 @@ def compute_reps(DL, model, device, args):
         DL.dataset_name,
         "reps",
         args.xp if args.xp in ["random-labels"] else "",
+        f"seed-{args.seed}",
     )
 
     reps = []

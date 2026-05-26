@@ -96,7 +96,7 @@ class DataLoader:
         transform=None,
         batch_size=50,
         num_workers=1,
-        seed=13579,
+        seed=0,
         random_sample=True,
         sample_w_replacement=False,
         per_label=False,
@@ -240,11 +240,13 @@ class DataLoader:
     def subsample_dataset(self):
         """subsample to desired size"""
 
-        np.random.seed(self.seed)  # for consistent subsampling of datasets across runs
+        rng = np.random.default_rng(self.seed)
+        # for consistent subsampling of datasets across runs
+        # local generator, no global state side effects
 
         if self.random_sample:
             self.inds_keep = sorted(
-                np.random.choice(
+                rng.choice(
                     len(self.data_set),
                     self.nsample,
                     replace=self.sample_w_replacement,
@@ -338,7 +340,7 @@ def get_dataloader(
     batch_size=32,
     num_workers=1,
     transform=None,
-    seed=13579,
+    seed=0,
     random_sample=True,
     sample_w_replacement=False,
     per_label=False,
