@@ -46,7 +46,7 @@ def get_inception_scores(args, device, num_workers):
             num_workers,
             args,
         )
-        # dataloaderi.data_loader is a list
+        # dataloaderi.data_loader is a single overall loader
         print(f"Computing inception score for {path}\n", file=sys.stderr)
         IS_score_i = compute_inception_score(
             model_IS,
@@ -345,7 +345,7 @@ def run(args):
         model,
         device,
         args,
-    )  # list
+    )  # overall reps array (Nimg, ndim)
     real_labs = real_dl.labels
 
     if args.save_imgs:
@@ -448,7 +448,7 @@ def run(args):
         "gen_ds": "-".join(gen_dataset_names),
         "model": args.model + "-" + args.arch if args.arch is not None else args.model,
         "scores": "-".join(args.metrics),
-        "nimgs": len(real_dl.data_loader[0].dataset),
+        "nimgs": len(real_dl.data_loader.dataset),
         "reduced": args.reduced_n,
     }
     if args.nruns > 1:

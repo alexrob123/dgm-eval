@@ -20,55 +20,48 @@ except ImportError:
 
 def compute_reps(DL, model, device, args):
     """
-    Load representations from disk if path exists,
-    else compute image representations using the specified encoder
+    Compute (or load from disk) the overall image representations.
+
+    Only the overall reps are stored; per-label groups are derived downstream by
+    filtering with the labels. The cache is label- and experiment-independent.
 
     Returns:
-        repsi: float32 (Nimage, ndim)
+        reps: float32 (Nimage, ndim)
     """
     print(f"\nGetting representations for dataset: {DL.dataset_name}", file=sys.stderr)
     reps_dir = os.path.join(
         "./out-data",
         DL.dataset_name,
         "reps",
-        args.xp if args.xp in ["random-labels"] else "",
         f"seed-{args.seed}",
     )
 
-    reps = []
-    for i, dl in enumerate(DL.data_loader):
-        label = "overall" if i == 0 else f"label-{i - 1}"
-        repsi = None
+    reps = None
+    if args.load:
+        reps = load_reps(reps_dir, args.model, None, DL.data_loader, label="overall")
 
-        if args.load:
-            repsi = load_reps(reps_dir, args.model, None, dl, label=label)
-            if repsi is not None:
-                reps.append(repsi)
-                continue
+    if reps is None:
+        print("Calculating reps...", file=sys.stderr)
+        reps = get_reps(model, DL.data_loader, device, normalized=False)
 
-        if repsi is None:
-            print("Calculating reps...", file=sys.stderr)
-            repsi = get_reps(model, dl, device, normalized=False)
-            reps.append(repsi)
+        if args.save:
+            print(f"Saving reps to {reps_dir}", file=sys.stderr)
 
-            if args.save:
-                print(f"Saving reps to {reps_dir}", file=sys.stderr)
+            hparams = vars(DL).copy()
+            # Remove keys that can't be pickled
+            hparams.pop("transform")
+            hparams.pop("data_loader")
+            hparams.pop("data_set")
 
-                hparams = vars(DL).copy()
-                # Remove keys that can't be pickled
-                hparams.pop("transform")
-                hparams.pop("data_loader")
-                hparams.pop("data_set")
-
-                save_reps(
-                    reps_dir,
-                    repsi,
-                    args.model,
-                    None,
-                    dl,
-                    label=label,
-                    hparams=hparams,
-                )
+            save_reps(
+                reps_dir,
+                reps,
+                args.model,
+                None,
+                DL.data_loader,
+                label="overall",
+                hparams=hparams,
+            )
 
     return reps
 

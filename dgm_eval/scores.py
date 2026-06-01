@@ -206,26 +206,70 @@ def aggregate_labelwise_scores(run_scores):
 ####################################################################################################
 
 
-def _run_default(args, reps_r, reps_g, test_reps, labels):
+def _label_partition_setup(args, labels):
+    """Resolve per-label filtering inputs from the overall labels.
+
+    Returns (real_labs, gen_labs, label_values). label_values is empty unless
+    --per-label is set and both real and generated samples carry labels, in
+    which case only the overall score is computed.
+    """
+    if not args.per_label or labels is None:
+        return None, None, np.array([])
+
+    real_labs = None if labels[0] is None else np.asarray(labels[0])
+    gen_labs = None if labels[1] is None else np.asarray(labels[1])
+
+    if (
+        real_labs is None
+        or gen_labs is None
+        or len(real_labs) == 0
+        or len(gen_labs) == 0
+    ):
+        return real_labs, gen_labs, np.array([])
+
+    return real_labs, gen_labs, np.unique(real_labs)
+
+
+def _run_default(args, real_overall, gen_overall, test_reps, labels):
     """Standard runs: vary the subsampling seed across runs, keep labels fixed.
 
-    Mean/std across runs therefore captures the variance inherent to the prdc
-    subsampling (the per-label partition baked into reps_r/reps_g is constant).
+    Per-label groups are obtained by filtering the overall reps with their true
+    labels. Mean/std across runs therefore captures the variance inherent to the
+    prdc subsampling.
     """
     vendi_scores = {}
     all_runs_scores = []  # list of per-run dicts: {label: scores_dict}
+
+    real_labs, gen_labs, label_values = _label_partition_setup(args, labels)
 
     for r in range(args.nruns):
         print(f"\n=== Run {r + 1}/{args.nruns} ===")
         run_scores = {}
 
-        for i, (rr, rg) in enumerate(zip(reps_r, reps_g)):
-            label = "overall" if i == 0 else f"label-{i - 1}"
+        print("\n--- overall ---")
+        print(f"samples with shapes {real_overall.shape} and {gen_overall.shape}\n")
+        scores, vs = compute_scores(
+            args,
+            real_overall,
+            gen_overall,
+            test_reps,
+            labels=labels,
+            label_name="overall",
+            seed=args.seed + r,  # vary subsampling per run
+        )
+        if vs:
+            vendi_scores = vs
+        run_scores["overall"] = scores
+
+        for idx, lab in enumerate(label_values):
+            label = f"label-{idx}"
+            rr = real_overall[real_labs == lab]
+            rg = gen_overall[gen_labs == lab]
 
             print(f"\n--- {label} ---")
             print(f"samples with shapes {rr.shape} and {rg.shape}\n")
 
-            scores, vs = compute_scores(
+            scores, _ = compute_scores(
                 args,
                 rr,
                 rg,
@@ -234,8 +278,6 @@ def _run_default(args, reps_r, reps_g, test_reps, labels):
                 label_name=label,
                 seed=args.seed + r,  # vary subsampling per run
             )
-            if vs:
-                vendi_scores = vs
             run_scores[label] = scores
 
         aggregate_labelwise_scores(run_scores)
@@ -244,23 +286,20 @@ def _run_default(args, reps_r, reps_g, test_reps, labels):
         pprint(run_scores)
         all_runs_scores.append(run_scores)
 
-        print("All runs scores so far:")
-        pprint(all_runs_scores)
-
     return all_runs_scores, vendi_scores
 
 
-def _run_random_labels(args, reps_r, reps_g, test_reps, labels):
-    """Random-labels runs: vary the label permutation, keep subsampling fixed.
+def _run_random_labels(args, real_overall, gen_overall, test_reps, labels):
+    """Random-labels runs: vary the real-label permutation, keep subsampling fixed.
 
     Representations are independent of labels, so we re-partition the overall
-    reps under a fresh label permutation each run while holding the subsampling
-    seed constant. Mean/std across runs therefore captures the variance inherent
-    to the random label assignment only (not the prdc subsampling).
+    reps under a fresh permutation of the real labels each run while holding the
+    subsampling seed constant. Generated samples keep their true labels, so the
+    gen per-label partition is fixed across runs. Mean/std across runs therefore
+    captures the variance inherent to the random label assignment only (not the
+    prdc subsampling).
     """
-    real_overall, gen_overall = reps_r[0], reps_g[0]
-    real_labs, gen_labs = np.asarray(labels[0]), np.asarray(labels[1])
-    label_values = np.unique(real_labs)
+    real_labs, gen_labs, label_values = _label_partition_setup(args, labels)
 
     # "overall" is invariant to the label permutation -> compute once and reuse.
     print("\n--- overall (invariant to label permutation) ---")
@@ -277,12 +316,9 @@ def _run_random_labels(args, reps_r, reps_g, test_reps, labels):
     all_runs_scores = []
     for r in range(args.nruns):
         print(f"\n=== Run {r + 1}/{args.nruns} (random labels) ===")
-        # Permute the real-sample labels.
-        # Generated samples keep their true labels, the gen per-label partition is fixed across runs.
-        rng_lab = np.random.default_rng(
-            args.seed + r
-        )  # vary label randomization per run, independent of subsampling
-        perm_r = rng_lab.permutation(real_labs)
+        # vary the real-label assignment per run, independent of subsampling
+        rng_lab = np.random.default_rng(args.seed + r)
+        perm_r = rng_lab.permutation(real_labs) if len(label_values) else None
 
         run_scores = {"overall": overall_scores}
         for idx, lab in enumerate(label_values):
@@ -314,8 +350,11 @@ def _run_random_labels(args, reps_r, reps_g, test_reps, labels):
 
 
 def compute_scores_wrapper(args, reps_r, reps_g, test_reps, labels=None):
-    assert len(reps_r) == len(reps_g), "Num of real reps and real labels must match"
+    """reps_r, reps_g: overall real/generated representation arrays (Nimg, ndim).
 
+    Per-label groups, when --per-label is set, are derived by filtering these
+    overall reps with the labels -- no separate per-label representations needed.
+    """
     if args.xp == "random-labels":
         all_runs_scores, vendi_scores = _run_random_labels(
             args, reps_r, reps_g, test_reps, labels

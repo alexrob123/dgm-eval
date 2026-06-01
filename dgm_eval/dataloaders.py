@@ -99,8 +99,6 @@ class DataLoader:
         seed=0,
         random_sample=True,
         sample_w_replacement=False,
-        per_label=False,
-        randomize_labels=False,
     ):
 
         self.path = path
@@ -112,8 +110,6 @@ class DataLoader:
 
         # for class conditional models, remember the labels as loading
         self.labels = []
-        self.per_label = per_label
-        self.randomize_labels = randomize_labels
 
         self.random_sample = random_sample
         self.sample_w_replacement = sample_w_replacement
@@ -269,16 +265,11 @@ class DataLoader:
 
     def get_dataloader(self):
         """
-        Create dataloader(s) from dataset and assign to self.data_loader.
+        Create a single overall torch DataLoader over all items and assign it to
+        self.data_loader.
 
-        If self.per_label is True and self.labels is not None/empty, builds
-        one torch DataLoader per unique label, plus an overall one. The result
-        stored on self.data_loader is a list of length N+1 such that:
-            self.data_loader[i] for i in 0..N-1 -> loader over items with
-                                                    label self.label_values[i]
-            self.data_loader[-1]                -> overall loader (all items)
-
-        Otherwise self.data_loader is a single torch DataLoader over all items.
+        Per-label grouping is handled downstream by filtering the overall
+        representations with self.labels, so no per-label loaders are built here.
         """
         self.nimages = len(self.data_set)
         if self.batch_size > self.nimages:
@@ -290,39 +281,18 @@ class DataLoader:
             )
             self.batch_size = self.nimages
 
-        def _make(data):
-            return torch.utils.data.DataLoader(
-                data,
-                batch_size=self.batch_size,
-                shuffle=False,
-                drop_last=False,
-                num_workers=self.num_workers,
-            )
+        self.data_loader = torch.utils.data.DataLoader(
+            self.data_set,
+            batch_size=self.batch_size,
+            shuffle=False,
+            drop_last=False,
+            num_workers=self.num_workers,
+        )
 
-        overall = _make(self.data_set)
-        if self.labels is not None:
+        if self.labels is not None and len(self.labels) > 0:
             self.label_values = np.unique(self.labels).tolist()
         else:
             self.label_values = None
-
-        if not self.per_label or self.labels is None or len(self.labels) == 0:
-            self.data_loader = [overall]
-            return
-
-        labels_arr = np.asarray(self.labels)
-        if self.randomize_labels:
-            print("Randomizing labels for all items in dataset")
-            rng = np.random.default_rng(self.seed)
-            labels_arr = rng.permutation(labels_arr)
-
-        per_label_loaders = []
-        for label_i in self.label_values:
-            inds = np.where(labels_arr == label_i)[0].tolist()
-            per_label_loaders.append(
-                _make(torch.utils.data.Subset(self.data_set, inds))
-            )
-
-        self.data_loader = [overall] + per_label_loaders
 
     def __str__(self):
         return (
@@ -330,9 +300,8 @@ class DataLoader:
             f"\tdataset name {self.dataset_name}\n"
             f"\timages {self.original_ds_len}, used {self.ds_len}\n"
             f"\tbatch size {self.batch_size}\n"
-            f"\tdataloaders: {len(self.data_loader)}, overall at index 0\n"
             f"\tlabels {self.label_values}\n"
-            f"\timg/dl: {[len(dl.dataset) for dl in self.data_loader]}"
+            f"\timages in loader: {len(self.data_loader.dataset)}"
         )
 
 
@@ -345,8 +314,6 @@ def get_dataloader(
     seed=0,
     random_sample=True,
     sample_w_replacement=False,
-    per_label=False,
-    randomize_labels=False,
 ):
     """Deal with format of input path, and get relevant DataLoader"""
 
@@ -368,8 +335,6 @@ def get_dataloader(
         seed=seed,
         random_sample=random_sample,
         sample_w_replacement=sample_w_replacement,
-        per_label=per_label,
-        randomize_labels=randomize_labels,
     )
 
     return DL
@@ -392,8 +357,6 @@ def get_dataloader_from_path(
         seed=args.seed,
         sample_w_replacement=sample_w_replacement,
         transform=lambda x: model_transform(x),
-        per_label=args.per_label,
-        randomize_labels=True if args.xp == "random-labels" else False,
     )
 
     print(dataloader)
