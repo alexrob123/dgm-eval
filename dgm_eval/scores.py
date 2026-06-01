@@ -1,6 +1,7 @@
 import os
 import pathlib
 import sys
+from pprint import pprint
 
 import numpy as np
 import pandas as pd
@@ -190,26 +191,20 @@ def compute_scores(
 
 
 def compute_scores_wrapper(args, reps_r, reps_g, test_reps, labels=None):
-    """
-    reps: list of two arrays corresponding to real reps and gen reps, each of shape (Nimage, ndim)
-    labels: array of shape (Nimage,) with class labels for generated samples, if available
-    """
-
     assert len(reps_r) == len(reps_g), "Num of real reps and real labels must match"
 
-    all_scores = {}
     vendi_scores = {}
+    all_runs_scores = []  # list of per-run dicts: {label: scores_dict}
 
-    for i, (rr, rg) in enumerate(zip(reps_r, reps_g)):
-        label = "overall" if i == 0 else f"label-{i - 1}"
+    for r in range(args.nruns):
+        print(f"\n=== Run {r + 1}/{args.nruns} ===")
+        run_scores = {}
 
-        print(f"\n--- {label} ---")
-        print(f"samples with shapes {rr.shape} and {rg.shape}\n")
+        for i, (rr, rg) in enumerate(zip(reps_r, reps_g)):
+            label = "overall" if i == 0 else f"label-{i - 1}"
 
-        runs_scores = []
-
-        for r in range(args.nruns):
-            print(f">> Run {r + 1}/{args.nruns}")
+            print(f"\n--- {label} ---")
+            print(f"samples with shapes {rr.shape} and {rg.shape}\n")
 
             scores, vs = compute_scores(
                 args,
@@ -222,29 +217,51 @@ def compute_scores_wrapper(args, reps_r, reps_g, test_reps, labels=None):
             )
             if vs:
                 vendi_scores = vs
-            runs_scores.append(scores)
+            run_scores[label] = scores
 
-        if args.nruns == 1:
-            all_scores[label] = runs_scores[0]
+        # Aggregate label-* scores within this run
+        label_keys = [k for k in run_scores if k.startswith("label-")]
+        if label_keys:
+            sample_keys = [k for k in run_scores[label_keys[0]] if k != "realism"]
+            run_scores["agg"] = {
+                f"{key}": sum(run_scores[lk][key] for lk in label_keys)
+                / len(label_keys)
+                for key in sample_keys
+            }
 
-        else:
-            # args.nruns > 1
-            # process scores from all runs to compute mean and std
-            mean_scores, std_scores = {}, {}
+        from pprint import pprint
 
-            keys = runs_scores[0].keys()
-            for key in keys:
-                values = [run_score[key] for run_score in runs_scores]
-                if key == "realism":
-                    # per-sample array; keep last run's value, no std
-                    mean_scores[key] = values[-1]
-                    continue
-                values_array = np.array(values)
-                mean_scores[key] = values_array.mean()
-                std_scores[key] = values_array.std()
+        print("Run scores:")
+        pprint(run_scores)
 
-            all_scores[label] = mean_scores
+        all_runs_scores.append(run_scores)
+
+        print("All runs scores so far:")
+        pprint(all_runs_scores)
+
+    # Compute mean (and std if nruns > 1) across runs for all labels
+    all_scores = {}
+    all_labels = all_runs_scores[0].keys()
+
+    for label in all_labels:
+        all_keys = all_runs_scores[0][label].keys()
+        mean_scores, std_scores = {}, {}
+
+        for key in all_keys:
+            values = [run[label][key] for run in all_runs_scores]
+            if key == "realism":
+                mean_scores[key] = values[-1]
+                continue
+            arr = np.array(values)
+            mean_scores[key] = arr.mean()
+            std_scores[key] = arr.std()
+
+        all_scores[label] = mean_scores
+        if args.nruns > 1:
             all_scores[f"{label}_std"] = std_scores
+
+    print("all_scores:")
+    pprint(all_scores)
 
     return all_scores, vendi_scores
 
@@ -309,7 +326,7 @@ def save_scores(description, scores, args, is_only=False, vendi_scores={}):
     run_params["generated_dataset"] = run_params["gen"]
 
     ckpt_str = ""
-    print(scores, file=sys.stderr)
+    pprint(scores)
 
     if is_only:
         description["scores"] = "is"

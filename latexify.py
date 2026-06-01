@@ -17,7 +17,39 @@ METRIC_RENAME = {
     "recall": "R",
     "density": "D",
     "coverage": "C",
+    "prdc_nreal": "N real",
+    "prdc_nfake": "N fake",
 }
+
+PRECISION_EST_STR = r"$\hat \alpha (P_X, Q_X)$"
+COND_PRECISION_EST_STR = lambda i: (
+    rf"$\hat \alpha (P_{{X|Y={{{i}}}}}, Q_{{X|Y={{{i}}}}})$"
+)
+RAND_COND_PRECISION_EST_STR = lambda i: (
+    rf"$\hat \alpha (P_{{X|Z={{{i}}}}}, Q_{{X|Z={{{i}}}}})$"
+)
+AVG_COND_PRECISION_EST_STR = r"$E_Y \left[ \hat \alpha(P_{X|Y}, Q_{X|Y}) \right]$"
+AVG_RAND_COND_PRECISION_EST_STR = r"$E_Z \left[ \hat \alpha(P_{X|Z}, Q_{X|Z}) \right]$"
+DIFF_STR = r"$\Delta$"
+
+
+def fmt_cell(row, col, df_mean, df_std, count_col):
+    mean = df_mean.loc[row, col]
+    if col == count_col:
+        return f"{int(mean)}" if pd.notna(mean) else ""
+    std = df_std.loc[row, col] if col in df_std.columns else np.nan
+    if pd.isna(std):
+        return f"{mean:.3f}\phantom{{$~\pm~0.000$}}"
+    return f"{mean:.3f} $\pm$ {std:.3f}"
+
+
+def select_random_indexes(max_i, size=10, seed=0):
+    if max_i > size:
+        rng = np.random.default_rng(seed)
+        selection = sorted(rng.choice(max_i, size=size, replace=False).tolist())
+    else:
+        selection = list(range(max_i))
+    return selection
 
 
 def save_latex_table(
@@ -92,6 +124,91 @@ def main():
 #         num_workers,
 #         args,
 #     )  # list
+
+
+####################################################################################################
+# XP STANDARD
+####################################################################################################
+
+
+@main.command()
+@click.option("--path", "-p",       help="Path containing the sweep results",                           type=click.Path(exists=True))  # fmt: skip
+@click.option("--outdir", "-o",     help="Path to save the generated LaTeX tables.", metavar="DIR",     type=click.Path(), default="out-latexify")  # fmt: skip
+def xp(path, outdir):
+    logger.info(f"Processing results in {path}...")
+
+    # Output fname
+    fname = "xp_" + Path(path).stem
+    logger.info(f"Derived LaTeX table name: {fname}")
+
+    # Data
+    data = np.load(path, allow_pickle=True)
+    metrics = data["scores"].item()["run00"]
+    df = pd.DataFrame(metrics).T
+
+    # Split mean and std rows
+    mean_rows = [r for r in df.index if not r.endswith("_std")]
+    std_rows = [r for r in df.index if r.endswith("_std")]
+    num_labels = sum(1 for r in mean_rows if r.startswith("label-"))
+
+    df_mean = df.loc[mean_rows].copy()
+    df_std = df.loc[std_rows].rename(index=lambda x: x.removesuffix("_std")).copy()
+
+    metric_cols = [
+        "precision",
+        # "recall",
+        # "density",
+        # "coverage",
+    ]
+    count_col = "prdc_nreal"  # prdc_nreal == prdc_nfake always
+
+    # diff row: overall - agg, no std
+    df_mean.loc["diff", metric_cols] = (
+        df_mean.loc["overall", metric_cols] - df_mean.loc["agg", metric_cols]
+    )
+    df_mean.loc["diff", count_col] = np.nan
+    df_std.loc["diff"] = np.nan
+
+    # format cells
+    col_keys = [count_col] + metric_cols
+    df_display = pd.DataFrame(
+        {
+            col: [
+                fmt_cell(row, col, df_mean, df_std, count_col) for row in df_mean.index
+            ]
+            for col in col_keys
+        },
+        index=df_mean.index,
+    )
+
+    selected_labels = select_random_indexes(num_labels, size=10, seed=0)
+    label_rows = [f"label-{i}" for i in selected_labels]
+    row_keys = ["overall"] + label_rows + ["agg", "diff"]
+
+    row_rename = {
+        "overall": PRECISION_EST_STR,
+        "agg": AVG_COND_PRECISION_EST_STR,
+        "diff": DIFF_STR,
+        **{f"label-{i}": COND_PRECISION_EST_STR(i) for i in selected_labels},
+    }
+    col_rename = {
+        count_col: "N",
+        "precision": "P",
+        "recall": "R",
+        "density": "D",
+        "coverage": "C",
+    }
+
+    df_final = df_display.loc[row_keys, col_keys].rename(
+        index=row_rename, columns=col_rename
+    )
+
+    if outdir is not None:
+        outdir = Path(outdir).expanduser()
+        outdir.mkdir(parents=True, exist_ok=True)
+        save_latex_table(df_final, outdir=outdir, fname=fname)
+
+    return df_final, fname
 
 
 ####################################################################################################
