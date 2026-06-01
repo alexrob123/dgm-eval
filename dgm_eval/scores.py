@@ -190,9 +190,28 @@ def compute_scores(
     return scores, vendi_scores
 
 
-def compute_scores_wrapper(args, reps_r, reps_g, test_reps, labels=None):
-    assert len(reps_r) == len(reps_g), "Num of real reps and real labels must match"
+def aggregate_labelwise_scores(run_scores):
+    """Average label-* scores within a run into run_scores["agg"] (in place)."""
+    label_keys = [k for k in run_scores if k.startswith("label-")]
+    if label_keys:
+        sample_keys = [k for k in run_scores[label_keys[0]] if k != "realism"]
+        run_scores["agg"] = {
+            key: sum(run_scores[lk][key] for lk in label_keys) / len(label_keys)
+            for key in sample_keys
+        }
 
+
+####################################################################################################
+# Wrapper
+####################################################################################################
+
+
+def _run_default(args, reps_r, reps_g, test_reps, labels):
+    """Standard runs: vary the subsampling seed across runs, keep labels fixed.
+
+    Mean/std across runs therefore captures the variance inherent to the prdc
+    subsampling (the per-label partition baked into reps_r/reps_g is constant).
+    """
     vendi_scores = {}
     all_runs_scores = []  # list of per-run dicts: {label: scores_dict}
 
@@ -213,31 +232,98 @@ def compute_scores_wrapper(args, reps_r, reps_g, test_reps, labels=None):
                 test_reps,
                 labels=labels,
                 label_name=label,
-                seed=args.seed + r,
+                seed=args.seed + r,  # vary subsampling per run
             )
             if vs:
                 vendi_scores = vs
             run_scores[label] = scores
 
-        # Aggregate label-* scores within this run
-        label_keys = [k for k in run_scores if k.startswith("label-")]
-        if label_keys:
-            sample_keys = [k for k in run_scores[label_keys[0]] if k != "realism"]
-            run_scores["agg"] = {
-                f"{key}": sum(run_scores[lk][key] for lk in label_keys)
-                / len(label_keys)
-                for key in sample_keys
-            }
-
-        from pprint import pprint
+        aggregate_labelwise_scores(run_scores)
 
         print("Run scores:")
         pprint(run_scores)
-
         all_runs_scores.append(run_scores)
 
         print("All runs scores so far:")
         pprint(all_runs_scores)
+
+    return all_runs_scores, vendi_scores
+
+
+def _run_random_labels(args, reps_r, reps_g, test_reps, labels):
+    """Random-labels runs: vary the label permutation, keep subsampling fixed.
+
+    Representations are independent of labels, so we re-partition the overall
+    reps under a fresh label permutation each run while holding the subsampling
+    seed constant. Mean/std across runs therefore captures the variance inherent
+    to the random label assignment only (not the prdc subsampling).
+    """
+    real_overall, gen_overall = reps_r[0], reps_g[0]
+    real_labs, gen_labs = np.asarray(labels[0]), np.asarray(labels[1])
+    label_values = np.unique(real_labs)
+
+    # "overall" is invariant to the label permutation -> compute once and reuse.
+    print("\n--- overall (invariant to label permutation) ---")
+    overall_scores, _ = compute_scores(
+        args,
+        real_overall,
+        gen_overall,
+        test_reps,
+        labels=labels,
+        label_name="overall",
+        seed=args.seed,  # fixed subsampling
+    )
+
+    all_runs_scores = []
+    for r in range(args.nruns):
+        print(f"\n=== Run {r + 1}/{args.nruns} (random labels) ===")
+        # Permute the real-sample labels.
+        # Generated samples keep their true labels, the gen per-label partition is fixed across runs.
+        rng_lab = np.random.default_rng(
+            args.seed + r
+        )  # vary label randomization per run, independent of subsampling
+        perm_r = rng_lab.permutation(real_labs)
+
+        run_scores = {"overall": overall_scores}
+        for idx, lab in enumerate(label_values):
+            label = f"label-{idx}"
+            rr = real_overall[perm_r == lab]
+            rg = gen_overall[gen_labs == lab]
+
+            print(f"\n--- {label} ---")
+            print(f"samples with shapes {rr.shape} and {rg.shape}\n")
+
+            scores, _ = compute_scores(
+                args,
+                rr,
+                rg,
+                test_reps,
+                labels=labels,
+                label_name=label,
+                seed=args.seed,  # fixed subsampling -> isolates label-assignment variance
+            )
+            run_scores[label] = scores
+
+        aggregate_labelwise_scores(run_scores)
+
+        print("Run scores:")
+        pprint(run_scores)
+        all_runs_scores.append(run_scores)
+
+    return all_runs_scores, {}
+
+
+def compute_scores_wrapper(args, reps_r, reps_g, test_reps, labels=None):
+    assert len(reps_r) == len(reps_g), "Num of real reps and real labels must match"
+
+    if args.xp == "random-labels":
+        all_runs_scores, vendi_scores = _run_random_labels(
+            args, reps_r, reps_g, test_reps, labels
+        )
+    else:
+        all_runs_scores, vendi_scores = _run_default(
+            args, reps_r, reps_g, test_reps, labels
+        )
 
     # Compute mean (and std if nruns > 1) across runs for all labels
     all_scores = {}
@@ -260,7 +346,7 @@ def compute_scores_wrapper(args, reps_r, reps_g, test_reps, labels=None):
         if args.nruns > 1:
             all_scores[f"{label}_std"] = std_scores
 
-    print("all_scores:")
+    print("All scores:")
     pprint(all_scores)
 
     return all_scores, vendi_scores
