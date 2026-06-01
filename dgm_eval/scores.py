@@ -5,6 +5,7 @@ import sys
 import numpy as np
 import pandas as pd
 
+from .experiments import xp_knn_balls_filtering
 from .metrics import (
     compute_authpct,
     compute_CTscore,
@@ -65,10 +66,11 @@ def compute_scores(
     if "prdc" in args.metrics:  # compute for overall and per label
         print("Computing PRDC", file=sys.stderr)
 
-        rng = np.random.default_rng(seed)
         reduced_n = min(args.reduced_n, rr.shape[0], rg.shape[0])
+        rng = np.random.default_rng(seed)
         inds0 = rng.choice(rr.shape[0], reduced_n, replace=False)
         inds1 = np.arange(rg.shape[0])
+
         if "realism" not in args.metrics:
             # Realism is returned for each sample, so do not shuffle if this metric is desired.
             # Else filenames and realism scores will not align
@@ -93,12 +95,10 @@ def compute_scores(
     ):
         print("Computing PRDC per label with kNN balls filtering")
 
-        rng = np.random.default_rng(seed)
         reduced_n = min(args.reduced_n, rr.shape[0], rg.shape[0])
+        rng = np.random.default_rng(seed)
         inds0 = rng.choice(rr.shape[0], reduced_n, replace=False)
         inds1 = rng.choice(rg.shape[0], reduced_n, replace=False)
-
-        from .experiments import xp_knn_balls_filtering
 
         d = xp_knn_balls_filtering(
             rr[inds0],
@@ -185,7 +185,6 @@ def compute_scores(
     for key, value in scores.items():
         if key != "realism":
             print(f"{key}: {value:.5f}", file=sys.stderr)
-    print("\n")
 
     return scores, vendi_scores
 
@@ -221,10 +220,8 @@ def compute_scores_wrapper(args, reps_r, reps_g, test_reps, labels=None):
                 label_name=label,
                 seed=args.seed + r,
             )
-
             if vs:
                 vendi_scores = vs
-
             runs_scores.append(scores)
 
         if args.nruns == 1:

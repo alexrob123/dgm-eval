@@ -332,8 +332,6 @@ def run(args):
         depth=args.depth,
     )
 
-    descriptive_stats = {}
-
     # --- TRAIN REPRESENTATIONS ---
 
     real_dl = get_dataloader_from_path(
@@ -450,14 +448,14 @@ def run(args):
         "gen_ds": "-".join(gen_dataset_names),
         "model": args.model + "-" + args.arch if args.arch is not None else args.model,
         "scores": "-".join(args.metrics),
-        "nimgs": args.nsample
-        if args.nsample > 0
-        else len(real_dl.data_loader[0].dataset),
+        "nimgs": len(real_dl.data_loader[0].dataset),
+        "reduced": args.reduced_n,
     }
-    if "prdc" in args.metrics:
-        desc["k"] = args.nearest_k
     if args.nruns > 1:
         desc["nruns"] = args.nruns
+
+    if "prdc" in args.metrics:
+        desc["k"] = args.nearest_k
 
     save_scores(
         desc,

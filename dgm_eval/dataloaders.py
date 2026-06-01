@@ -132,10 +132,12 @@ class DataLoader:
         if not transform:
             self.transform = torchvision.transforms.ToTensor()
 
-        self.get_dataset()
+        self.get_dataset()  # self.data_set, self.labels
+        self.original_ds_len = len(self.data_set)
 
         if (self.nsample > 0) and (len(self.data_set) > self.nsample):
-            self.subsample_dataset()
+            self.subsample_dataset()  # self.data_set, self.labels
+        self.ds_len = len(self.data_set)
 
         self.get_dataloader()
 
@@ -326,7 +328,7 @@ class DataLoader:
         return (
             f"DataLoader for path {self.path}\n"
             f"\tdataset name {self.dataset_name}\n"
-            f"\timages {len(self.data_set)}\n"
+            f"\timages {self.original_ds_len}, used {self.ds_len}\n"
             f"\tbatch size {self.batch_size}\n"
             f"\tdataloaders: {len(self.data_loader)}, overall at index 0\n"
             f"\tlabels {self.label_values}\n"

@@ -70,10 +70,11 @@ def compute_prdc(real_features, fake_features, nearest_k=None, realism=False):
         dict of precision, recall, density, and coverage.
     """
 
-    print(f"Num real: {real_features.shape[0]} Num fake: {fake_features.shape[0]}")
+    n_real, n_fake = int(real_features.shape[0]), int(fake_features.shape[0])
+    print(f"Num real: {n_real} Num fake: {n_fake}")
 
     if nearest_k is None:
-        nearest_k = int(np.sqrt(real_features.shape[0]))
+        nearest_k = int(np.sqrt(n_real))
         print(f"k is None. Setting it to sqrt of num samples: {nearest_k}")
     else:
         print(f"k: {nearest_k}")
@@ -90,7 +91,14 @@ def compute_prdc(real_features, fake_features, nearest_k=None, realism=False):
     ).sum(axis=0).mean()
     C = (distance_real_fake.min(axis=1) < real_NND).mean()
 
-    d = dict(precision=P, recall=R, density=D, coverage=C)
+    d = dict(
+        prdc_nreal=n_real,
+        prdc_nfake=n_fake,
+        precision=P,
+        recall=R,
+        density=D,
+        coverage=C,
+    )
 
     if realism:
         """
