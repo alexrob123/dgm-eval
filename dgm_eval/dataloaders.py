@@ -83,7 +83,7 @@ class NpzDataset(torch.utils.data.Dataset):
         return img
 
 
-class DataLoader:
+class DataModule:
     """
     Create Datasets and Dataloaders from ImagePathDataset and from torchvision.datasets.
     """
@@ -128,12 +128,12 @@ class DataLoader:
         if not transform:
             self.transform = torchvision.transforms.ToTensor()
 
-        self.get_dataset()  # self.data_set, self.labels
-        self.original_ds_len = len(self.data_set)
+        self.get_dataset()  # self.dataset, self.labels
+        self.original_ds_len = len(self.dataset)
 
-        if (self.nsample > 0) and (len(self.data_set) > self.nsample):
-            self.subsample_dataset()  # self.data_set, self.labels
-        self.ds_len = len(self.data_set)
+        if (self.nsample > 0) and (len(self.dataset) > self.nsample):
+            self.subsample_dataset()  # self.dataset, self.labels
+        self.ds_len = len(self.dataset)
 
         self.get_dataloader()
 
@@ -165,7 +165,7 @@ class DataLoader:
         self.labels = None
         # Confirm data at path is in proper format
         try:
-            self.data_set = NpzDataset(self.path, transform=self.transform)
+            self.dataset = NpzDataset(self.path, transform=self.transform)
         except:
             raise RuntimeError(
                 f"Images cannot be loaded from {self.path}. Expecting ADM-style npz file: {IMAGE_EXTENSIONS}"
@@ -209,7 +209,7 @@ class DataLoader:
 
         # Confirm data at path is in proper format
         try:
-            self.data_set = ImagePathDataset(self.files, transform=self.transform)
+            self.dataset = ImagePathDataset(self.files, transform=self.transform)
         except:
             raise RuntimeError(
                 f"Images cannot be loaded from {self.path}. Expecting path full of images: {IMAGE_EXTENSIONS}"
@@ -228,7 +228,7 @@ class DataLoader:
             raise RuntimeError(f"{self.dataset_name} is not a dataset in torchvision")
 
         else:
-            self.data_set = torchvision_dataset(
+            self.dataset = torchvision_dataset(
                 root=TORCHVISION_DATA_PATH,
                 train=self.train_set,
                 transform=self.transform,
@@ -245,7 +245,7 @@ class DataLoader:
         if self.random_sample:
             self.inds_keep = sorted(
                 rng.choice(
-                    len(self.data_set),
+                    len(self.dataset),
                     self.nsample,
                     replace=self.sample_w_replacement,
                 )
@@ -258,20 +258,20 @@ class DataLoader:
 
         if self.labels is not None and len(self.labels) > 0:
             self.labels = self.labels[self.inds_keep]
-        self.data_set = torch.utils.data.Subset(
-            self.data_set,
+        self.dataset = torch.utils.data.Subset(
+            self.dataset,
             self.inds_keep,
         )
 
     def get_dataloader(self):
         """
         Create a single overall torch DataLoader over all items and assign it to
-        self.data_loader.
+        self.dataloader.
 
         Per-label grouping is handled downstream by filtering the overall
         representations with self.labels, so no per-label loaders are built here.
         """
-        self.nimages = len(self.data_set)
+        self.nimages = len(self.dataset)
         if self.batch_size > self.nimages:
             print(
                 (
@@ -281,8 +281,8 @@ class DataLoader:
             )
             self.batch_size = self.nimages
 
-        self.data_loader = torch.utils.data.DataLoader(
-            self.data_set,
+        self.dataloader = torch.utils.data.DataLoader(
+            self.dataset,
             batch_size=self.batch_size,
             shuffle=False,
             drop_last=False,
@@ -296,16 +296,16 @@ class DataLoader:
 
     def __str__(self):
         return (
-            f"DataLoader for path {self.path}\n"
+            f"DataModule for path {self.path}\n"
             f"\tdataset name {self.dataset_name}\n"
             f"\timages {self.original_ds_len}, used {self.ds_len}\n"
             f"\tbatch size {self.batch_size}\n"
             f"\tlabels {self.label_values}\n"
-            f"\timages in loader: {len(self.data_loader.dataset)}"
+            f"\timages in loader: {len(self.dataloader.dataset)}"
         )
 
 
-def get_dataloader(
+def get_datamodule(
     path,
     nsample=-1,
     batch_size=32,
@@ -325,7 +325,7 @@ def get_dataloader(
 
     train_set = True if train_str.upper() == "TRAIN" else False
 
-    DL = DataLoader(
+    DM = DataModule(
         path,
         train_set=train_set,
         nsample=nsample,
@@ -337,19 +337,19 @@ def get_dataloader(
         sample_w_replacement=sample_w_replacement,
     )
 
-    return DL
+    return DM
 
 
-def get_dataloader_from_path(
+def get_datamodule_from_path(
     path,
     model_transform,
     num_workers,
     args,
     sample_w_replacement=False,
 ):
-    print(f"\nGetting DataLoader for path: {path}", file=sys.stderr)
+    print(f"\nGetting DataModule for path: {path}", file=sys.stderr)
 
-    dataloader = get_dataloader(
+    DM = get_datamodule(
         path,
         args.nsample,
         args.batch_size,
@@ -359,5 +359,5 @@ def get_dataloader_from_path(
         transform=lambda x: model_transform(x),
     )
 
-    print(dataloader)
-    return dataloader
+    print(DM)
+    return DM

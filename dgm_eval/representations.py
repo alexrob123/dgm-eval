@@ -18,7 +18,7 @@ except ImportError:
 ####################################################################################################
 
 
-def compute_reps(DL, model, device, args):
+def compute_reps(DM, model, device, args):
     """
     Compute (or load from disk) the overall image representations.
 
@@ -28,37 +28,37 @@ def compute_reps(DL, model, device, args):
     Returns:
         reps: float32 (Nimage, ndim)
     """
-    print(f"\nGetting representations for dataset: {DL.dataset_name}", file=sys.stderr)
+    print(f"\nGetting representations for dataset: {DM.dataset_name}", file=sys.stderr)
     reps_dir = os.path.join(
         "./out-data",
-        DL.dataset_name,
+        DM.dataset_name,
         "reps",
         f"seed-{args.seed}",
     )
 
     reps = None
     if args.load:
-        reps = load_reps(reps_dir, args.model, None, DL.data_loader, label="overall")
+        reps = load_reps(reps_dir, args.model, None, DM.dataloader, label="overall")
 
     if reps is None:
         print("Calculating reps...", file=sys.stderr)
-        reps = get_reps(model, DL.data_loader, device, normalized=False)
+        reps = get_reps(model, DM.dataloader, device, normalized=False)
 
         if args.save:
             print(f"Saving reps to {reps_dir}", file=sys.stderr)
 
-            hparams = vars(DL).copy()
+            hparams = vars(DM).copy()
             # Remove keys that can't be pickled
             hparams.pop("transform")
-            hparams.pop("data_loader")
-            hparams.pop("data_set")
+            hparams.pop("dataloader")
+            hparams.pop("dataset")
 
             save_reps(
                 reps_dir,
                 reps,
                 args.model,
                 None,
-                DL.data_loader,
+                DM.dataloader,
                 label="overall",
                 hparams=hparams,
             )

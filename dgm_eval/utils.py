@@ -21,7 +21,7 @@ def make_str(desc):
     if out_str.endswith("_"):
         out_str = out_str[:-1]
 
-    return out_str
+    return out_str.replace("-_", "_")
 
 
 def extend_path(p):

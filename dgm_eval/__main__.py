@@ -7,14 +7,14 @@ import numpy as np
 import pandas as pd
 import torch
 
-from .dataloaders import get_dataloader_from_path
+from .dataloaders import get_datamodule_from_path
 from .heatmaps import visualize_heatmaps
 from .infra import get_device_and_num_workers
 from .metrics import compute_inception_score
 from .models import MODELS, load_encoder
 from .representations import compute_reps
 from .samples import save_samples
-from .scores import compute_scores_wrapper, save_score, save_scores
+from .scores import run_compute_score, save_score, save_scores
 
 
 def get_inception_scores(args, device, num_workers):
@@ -40,7 +40,7 @@ def get_inception_scores(args, device, num_workers):
 
     for i, path in enumerate(args.path[1:]):
         print(f"\nGetting DataLoader for path: {path}\n", file=sys.stderr)
-        dataloaderi = get_dataloader_from_path(
+        dataloaderi = get_datamodule_from_path(
             args.path[i],
             model_IS.transform,
             num_workers,
@@ -61,29 +61,6 @@ def get_inception_scores(args, device, num_workers):
         sys.exit(0)
 
     return IS_scores
-
-
-# def get_dl_reps_labs(path, args, model, device, num_workers, **kwargs):
-#     """Gets dataloader, representations, and labels for dataset"""
-
-#     dl = get_dataloader_from_path(
-#         path,
-#         model.transform,
-#         num_workers,
-#         args,
-#         **kwargs,
-#     )  # list
-
-#     reps = compute_reps(
-#         dl,
-#         model,
-#         device,
-#         args,
-#     )  # list
-
-#     labs = dl.labels
-
-#     return dl, reps, labs
 
 
 ###################################################################################################
@@ -254,8 +231,19 @@ parser.add_argument(
     "--xp",
     type=str,
     default=None,
-    choices=["sweep-prdc-k", "random-labels", "knn-balls-filtering"],
+    choices=[
+        "sweep-prdc-k",
+        "filter-knn-balls",
+    ],
     help="Experiment to run.",
+)
+parser.add_argument(
+    "--random-labels",
+    action="store_true",
+    dest="random_labels",
+    help="Replace the real labels with a fresh random permutation, varied across "
+    "runs while the subsampling is held fixed. Orthogonal modifier: combine with "
+    "any --xp (or none) to run that scoring under randomized label assignments.",
 )
 # Randomness and device args
 parser.add_argument(
@@ -308,8 +296,13 @@ def run(args):
         print(f"Running experiment: {args.xp}\n")
         args.output_dir = os.path.join(args.output_dir, args.xp)
 
-    if args.xp in ["sweep-prdc-k", "knn-balls-filtering"]:
+    if args.xp in ["sweep-prdc-k", "filter-knn-balls"]:
         args.metrics = ["prdc"]
+
+    if args.xp in ["filter-knn-balls"]:
+        if not args.per_label:
+            print("Settings args.per_label = True")
+            args.per_label = True
 
     # --- QUICK INCEPTION SCORE OPTION ---
 
@@ -334,38 +327,39 @@ def run(args):
 
     # --- TRAIN REPRESENTATIONS ---
 
-    real_dl = get_dataloader_from_path(
+    real_dm = get_datamodule_from_path(
         args.train,
         model.transform,
         num_workers,
         args,
-    )  # list
+    )
     real_reps = compute_reps(
-        real_dl,
+        real_dm,
         model,
         device,
         args,
-    )  # overall reps array (Nimg, ndim)
-    real_labs = real_dl.labels
+    )
 
+    if args.per_label and real_dm.labels is None:
+        raise ValueError(f"No labels in real dataset {real_dm.dataset_name}")
     if args.save_imgs:
-        save_samples("./out-data", real_dl)
+        save_samples("./out-data", real_dm)
 
     # --- TEST REPRESENTATIONS ---
 
     if args.test_path is not None:
-        test_dl = get_dataloader_from_path(
+        test_dm = get_datamodule_from_path(
             args.test_path,
             model.transform,
             num_workers,
             args,
-        )  # list
+        )
         test_reps = compute_reps(
-            test_dl,
+            test_dm,
             model,
             device,
             args,
-        )  # list
+        )
     else:
         test_reps = None
 
@@ -376,30 +370,33 @@ def run(args):
     gen_dataset_names = []
 
     for i, path in enumerate(args.gen):
-        gen_dl_i = get_dataloader_from_path(
+        # Get representations
+        gen_dm_i = get_datamodule_from_path(
             path,
             model.transform,
             num_workers,
             args,
             sample_w_replacement=True if "train" in path else False,
-        )  # list
+        )
         gen_reps_i = compute_reps(
-            gen_dl_i,
+            gen_dm_i,
             model,
             device,
             args,
-        )  # list
-        gen_labs_i = gen_dl_i.labels
+        )
 
+        if args.per_label and gen_dm_i.labels is None:
+            raise ValueError(f"No labels in generated dataset {gen_dm_i.dataset_name}")
         if args.save_imgs:
-            save_samples("./out-data", gen_dl_i)
+            save_samples("./out-data", gen_dm_i)
 
-        gen_dataset_names.append(gen_dl_i.dataset_name)
+        gen_dataset_names.append(gen_dm_i.dataset_name)
 
-        labels = [real_labs, gen_labs_i]
+        # Compute scores
+        print(f"\nComputing scores between ref dataset and {path}\n")
 
-        print(f"\nComputing scores between ref dataset and {path}\n", file=sys.stderr)
-        scores_i, vendi_scores_i = compute_scores_wrapper(
+        labels = [real_dm.labels, gen_dm_i.labels]
+        scores_i, vendi_scores_i = run_compute_score(
             args,
             real_reps,
             gen_reps_i,
@@ -413,7 +410,7 @@ def run(args):
             scores_i,
             args.output_dir,
             args.model,
-            [real_dl.dataset_name, gen_dl_i.dataset_name],
+            [real_dm.dataset_name, gen_dm_i.dataset_name],
             None,
             args.nsample,
             metrics=args.metrics,
@@ -425,17 +422,17 @@ def run(args):
         if args.heatmaps:
             print("Visualizing FD gradient with gradcam\n", file=sys.stderr)
             heatmap_suffix = (
-                f"{args.model}_{real_dl.dataset_name}_{gen_dl_i.dataset_name}"
+                f"{args.model}_{real_dm.dataset_name}_{gen_dm_i.dataset_name}"
                 + f"{'_perturbation' if args.heatmaps_perturbation else ''}_{args.seed}"
             )
             visualize_heatmaps(
                 real_reps,
                 gen_reps_i,
                 model,
-                dataset=gen_dl_i.data_set,
+                dataset=gen_dm_i.data_set,
                 results_dir=os.path.join(args.output_dir, "results"),
                 results_suffix=heatmap_suffix,
-                dataset_name=gen_dl_i.dataset_name,
+                dataset_name=gen_dm_i.dataset_name,
                 device=device,
                 perturbation=args.heatmaps_perturbation,
                 random_seed=args.seed,
@@ -444,17 +441,22 @@ def run(args):
     # --- SAVE SCORES ---
 
     desc = {
-        "real_ds": real_dl.dataset_name,
+        "real_ds": real_dm.dataset_name,
         "gen_ds": "-".join(gen_dataset_names),
         "model": args.model + "-" + args.arch if args.arch is not None else args.model,
         "scores": "-".join(args.metrics),
-        "nimgs": len(real_dl.data_loader.dataset),
-        "reduced": args.reduced_n,
+        "nimgs": len(real_dm.dataloader.dataset),
     }
+    if args.random_labels:
+        desc["random-labs"] = ""
     if args.nruns > 1:
         desc["nruns"] = args.nruns
 
-    if "prdc" in args.metrics:
+    if set(args.metrics) & {"fls", "fls-overfit", "prdc"}:
+        if args.reduced_n != args.nsample:
+            desc["reduced"] = args.reduced_n
+
+    if set(args.metrics) & {"prdc"}:
         desc["k"] = args.nearest_k
 
     save_scores(

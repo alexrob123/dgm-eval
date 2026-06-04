@@ -91,7 +91,7 @@ def compute_scores(
 
     if (
         "prdc" in args.metrics
-        and args.xp == "knn-balls-filtering"
+        and args.xp == "filter-knn-balls"
         and label_name == "overall"
     ):
         print("Computing PRDC per label with kNN balls filtering")
@@ -190,23 +190,12 @@ def compute_scores(
     return scores, vendi_scores
 
 
-def aggregate_labelwise_scores(run_scores):
-    """Average label-* scores within a run into run_scores["agg"] (in place)."""
-    label_keys = [k for k in run_scores if k.startswith("label-")]
-    if label_keys:
-        sample_keys = [k for k in run_scores[label_keys[0]] if k != "realism"]
-        run_scores["agg"] = {
-            key: sum(run_scores[lk][key] for lk in label_keys) / len(label_keys)
-            for key in sample_keys
-        }
-
-
 ####################################################################################################
-# Wrapper
+# Labelwise
 ####################################################################################################
 
 
-def _label_partition_setup(args, labels):
+def labelwise_setup(args, labels):
     """Resolve per-label filtering inputs from the overall labels.
 
     Returns (real_labs, gen_labs, label_values). label_values is empty unless
@@ -230,41 +219,91 @@ def _label_partition_setup(args, labels):
     return real_labs, gen_labs, np.unique(real_labs)
 
 
-def _run_default(args, real_overall, gen_overall, test_reps, labels):
-    """Standard runs: vary the subsampling seed across runs, keep labels fixed.
+def aggregate_labelwise_scores(run_scores):
+    """Average label-* scores within a run into run_scores["agg"] (in place)."""
+    label_keys = [k for k in run_scores if k.startswith("label-")]
+    if label_keys:
+        sample_keys = [k for k in run_scores[label_keys[0]] if k != "realism"]
+        run_scores["agg"] = {
+            key: sum(run_scores[lk][key] for lk in label_keys) / len(label_keys)
+            for key in sample_keys
+        }
 
-    Per-label groups are obtained by filtering the overall reps with their true
-    labels. Mean/std across runs therefore captures the variance inherent to the
-    prdc subsampling.
+
+####################################################################################################
+# Run
+####################################################################################################
+
+
+def _run_plan(args, real_labs):
+    """Yield ``(real_labs_r, sub_seed, tag)`` for each run.
+
+    Each run advances exactly one source of randomness while pinning the other,
+    so the across-run mean/std isolates that source:
+
+    - ``--random-labels`` advances the *random permutation* (the real-label
+      shuffle) each run while pinning the *random reduction* (the reduced_n
+      subsampling seed), isolating label-assignment variance.
+    - otherwise the true labels are kept and the *random reduction* is advanced
+      each run, isolating reduction variance.
+
+    ``sub_seed`` is the seed handed to ``compute_scores``; it drives the random
+    reduction inside the prdc block.
     """
-    vendi_scores = {}
-    all_runs_scores = []  # list of per-run dicts: {label: scores_dict}
-
-    real_labs, gen_labs, label_values = _label_partition_setup(args, labels)
-
     for r in range(args.nruns):
-        print(f"\n=== Run {r + 1}/{args.nruns} ===")
+        if args.random_labels:
+            # advance the random permutation; pin the random reduction
+            rng_perm = np.random.default_rng(args.seed + r)
+            random_labs = None if real_labs is None else rng_perm.permutation(real_labs)
+            yield random_labs, args.seed, "(random permutation)"
+        else:
+            # advance the random reduction; keep true labels
+            yield real_labs, args.seed + r, ""
+
+
+def _run_default(args, real_reps, fake_reps, test_reps, labels):
+    """Standard per-label runs, with the optional ``--random-labels`` modifier.
+
+    Per-label groups are obtained by filtering the overall reps with the real
+    labels (true, or permuted under ``--random-labels``). The "overall" score is
+    invariant to the random permutation, so when randomizing labels (random
+    reduction pinned) it is computed once and reused across runs.
+    """
+
+    all_runs_scores = []  # list of per-run dicts: {label: scores_dict}
+    vendi_scores = {}
+
+    overall_cache = None  # reused across runs under --random-labels
+    real_labs, fake_labs, label_values = labelwise_setup(args, labels)
+
+    for r, (real_labs_, seed_, tag) in enumerate(_run_plan(args, real_labs)):
+        print(f"\n=== Run {r + 1}/{args.nruns} {tag} ===")
         run_scores = {}
 
-        print("\n--- overall ---")
-        print(f"samples with shapes {real_overall.shape} and {gen_overall.shape}\n")
-        scores, vs = compute_scores(
-            args,
-            real_overall,
-            gen_overall,
-            test_reps,
-            labels=labels,
-            label_name="overall",
-            seed=args.seed + r,  # vary subsampling per run
-        )
-        if vs:
-            vendi_scores = vs
+        if overall_cache is not None:
+            scores = overall_cache
+        else:
+            print("\n--- overall ---")
+            print(f"samples with shapes {real_reps.shape} and {fake_reps.shape}\n")
+            scores, vs = compute_scores(
+                args,
+                real_reps,
+                fake_reps,
+                test_reps,
+                labels=None,
+                label_name="overall",
+                seed=seed_,
+            )
+            if vs:
+                vendi_scores = vs
+            if args.random_labels:
+                overall_cache = scores  # invariant to the random permutation
         run_scores["overall"] = scores
 
         for idx, lab in enumerate(label_values):
             label = f"label-{idx}"
-            rr = real_overall[real_labs == lab]
-            rg = gen_overall[gen_labs == lab]
+            rr = real_reps[real_labs_ == lab]
+            rg = fake_reps[fake_labs == lab]
 
             print(f"\n--- {label} ---")
             print(f"samples with shapes {rr.shape} and {rg.shape}\n")
@@ -274,116 +313,116 @@ def _run_default(args, real_overall, gen_overall, test_reps, labels):
                 rr,
                 rg,
                 test_reps,
-                labels=labels,
+                labels=None,
                 label_name=label,
-                seed=args.seed + r,  # vary subsampling per run
+                seed=seed_,
             )
             run_scores[label] = scores
 
         aggregate_labelwise_scores(run_scores)
+        all_runs_scores.append(run_scores)
 
         print("Run scores:")
         pprint(run_scores)
-        all_runs_scores.append(run_scores)
 
     return all_runs_scores, vendi_scores
 
 
-def _run_random_labels(args, real_overall, gen_overall, test_reps, labels):
-    """Random-labels runs: vary the real-label permutation, keep subsampling fixed.
+def _run_filter_knn_balls(args, real_reps, fake_reps, test_reps, labels):
+    """filter-knn-balls runs: the overall and every per-label result are
+    produced by a single compute_scores call (they share the kNN radii). The
+    per-label results come back nested under the "overall" entry, so there is no
+    separate per-label filtering loop here.
 
-    Representations are independent of labels, so we re-partition the overall
-    reps under a fresh permutation of the real labels each run while holding the
-    subsampling seed constant. Generated samples keep their true labels, so the
-    gen per-label partition is fixed across runs. Mean/std across runs therefore
-    captures the variance inherent to the random label assignment only (not the
-    prdc subsampling).
+    Under ``--random-labels`` the real labels handed to the per-label filtering
+    are permuted each run (random reduction pinned), so the radii and overall
+    PRDC are identical across runs and only the per-label filtering shifts --
+    isolating the random-permutation variance.
     """
-    real_labs, gen_labs, label_values = _label_partition_setup(args, labels)
-
-    # "overall" is invariant to the label permutation -> compute once and reuse.
-    print("\n--- overall (invariant to label permutation) ---")
-    overall_scores, _ = compute_scores(
-        args,
-        real_overall,
-        gen_overall,
-        test_reps,
-        labels=labels,
-        label_name="overall",
-        seed=args.seed,  # fixed subsampling
-    )
 
     all_runs_scores = []
-    for r in range(args.nruns):
-        print(f"\n=== Run {r + 1}/{args.nruns} (random labels) ===")
-        # vary the real-label assignment per run, independent of subsampling
-        rng_lab = np.random.default_rng(args.seed + r)
-        perm_r = rng_lab.permutation(real_labs) if len(label_values) else None
 
-        run_scores = {"overall": overall_scores}
-        for idx, lab in enumerate(label_values):
-            label = f"label-{idx}"
-            rr = real_overall[perm_r == lab]
-            rg = gen_overall[gen_labs == lab]
+    real_labs, fake_labs, _ = labelwise_setup(args, labels)
 
-            print(f"\n--- {label} ---")
-            print(f"samples with shapes {rr.shape} and {rg.shape}\n")
+    for r, (real_labs_, seed_, tag) in enumerate(_run_plan(args, real_labs)):
+        print(f"\n=== Run {r + 1}/{args.nruns} (filter-knn-balls) {tag} ===")
 
-            scores, _ = compute_scores(
-                args,
-                rr,
-                rg,
-                test_reps,
-                labels=labels,
-                label_name=label,
-                seed=args.seed,  # fixed subsampling -> isolates label-assignment variance
-            )
-            run_scores[label] = scores
+        scores, _ = compute_scores(
+            args,
+            real_reps,
+            fake_reps,
+            test_reps,
+            labels=[real_labs_, fake_labs],
+            label_name="overall",
+            seed=seed_,
+        )
+
+        # standardize output format
+        keys = list(scores.keys())
+        run_scores = {}
+        for k in keys:
+            if k.startswith("label-"):
+                run_scores[k] = scores.pop(k)
+        run_scores["overall"] = scores
 
         aggregate_labelwise_scores(run_scores)
-
-        print("Run scores:")
-        pprint(run_scores)
         all_runs_scores.append(run_scores)
+
+        print("\nRun scores:")
+        pprint(run_scores)
 
     return all_runs_scores, {}
 
 
-def compute_scores_wrapper(args, reps_r, reps_g, test_reps, labels=None):
+def aggregate_runs(values):
+    """Aggregate one metric across runs into (mean, std).
+
+    Handles plain scalars as well as nested dicts (e.g. the per-label results
+    that filter-knn-balls nests under "overall"), recursing into the latter.
+    """
+    if isinstance(values[0], dict):
+        mean, std = {}, {}
+        for k in values[0]:
+            mean[k], std[k] = aggregate_runs([v[k] for v in values])
+        return mean, std
+    arr = np.array(values)
+    return arr.mean(), arr.std()
+
+
+def run_compute_score(args, real_reps, fake_reps, test_reps, labels=None):
     """reps_r, reps_g: overall real/generated representation arrays (Nimg, ndim).
 
     Per-label groups, when --per-label is set, are derived by filtering these
     overall reps with the labels -- no separate per-label representations needed.
     """
-    if args.xp == "random-labels":
-        all_runs_scores, vendi_scores = _run_random_labels(
-            args, reps_r, reps_g, test_reps, labels
+    if args.xp == "filter-knn-balls":
+        all_runs_scores, vendi_scores = _run_filter_knn_balls(
+            args, real_reps, fake_reps, test_reps, labels
         )
     else:
         all_runs_scores, vendi_scores = _run_default(
-            args, reps_r, reps_g, test_reps, labels
+            args, real_reps, fake_reps, test_reps, labels
         )
 
     # Compute mean (and std if nruns > 1) across runs for all labels
     all_scores = {}
-    all_labels = all_runs_scores[0].keys()
+    all_keys = all_runs_scores[0].keys()
 
-    for label in all_labels:
-        all_keys = all_runs_scores[0][label].keys()
+    for key in all_keys:
+        all_metrics = all_runs_scores[0][key].keys()
         mean_scores, std_scores = {}, {}
 
-        for key in all_keys:
-            values = [run[label][key] for run in all_runs_scores]
-            if key == "realism":
-                mean_scores[key] = values[-1]
+        for metric in all_metrics:
+            values = [run[key][metric] for run in all_runs_scores]
+            if metric == "realism":
+                mean_scores[metric] = values[-1]
                 continue
-            arr = np.array(values)
-            mean_scores[key] = arr.mean()
-            std_scores[key] = arr.std()
+            # values may be scalars or nested per-label dicts (filter-knn-balls)
+            mean_scores[metric], std_scores[metric] = aggregate_runs(values)
 
-        all_scores[label] = mean_scores
+        all_scores[key] = mean_scores
         if args.nruns > 1:
-            all_scores[f"{label}_std"] = std_scores
+            all_scores[f"{key}_std"] = std_scores
 
     print("All scores:")
     pprint(all_scores)
@@ -459,7 +498,7 @@ def save_scores(description, scores, args, is_only=False, vendi_scores={}):
     out_str = make_str(description)
 
     results_dir = args.output_dir
-    if args.xp in ("sweep-prdc-k", "knn-balls-filtering"):
+    if args.xp in ("sweep-prdc-k", "filter-knn-balls"):
         results_dir = os.path.join(results_dir, out_str.split("_k-")[0])
     pathlib.Path(results_dir).mkdir(parents=True, exist_ok=True)
 
