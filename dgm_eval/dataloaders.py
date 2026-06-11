@@ -1,3 +1,4 @@
+import logging
 import os
 import pathlib
 import sys
@@ -7,6 +8,13 @@ import torch
 import torchvision
 import torchvision.transforms
 from PIL import Image
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(levelname)s] %(name)s.%(funcName)s: %(message)s",
+    force=True,
+)
 
 IMAGE_EXTENSIONS = {"bmp", "jpg", "jpeg", "pgm", "png", "ppm", "tif", "tiff", "webp"}
 IMAGE_EXTENSIONS = IMAGE_EXTENSIONS | {ext.upper() for ext in IMAGE_EXTENSIONS}
@@ -236,20 +244,28 @@ class DataModule:
             )
 
     def subsample_dataset(self):
-        """subsample to desired size"""
+        """subsample to desired size, respecting label prior if available"""
+        logger.info(
+            f"Subsampling dataset from {len(self.dataset)} to {self.nsample} samples, with "
+            f"random_sample={self.random_sample}, sample_w_replacement={self.sample_w_replacement}"
+        )
 
         rng = np.random.default_rng(self.seed)
         # for consistent subsampling of datasets across runs
         # local generator, no global state side effects
 
         if self.random_sample:
-            self.inds_keep = sorted(
-                rng.choice(
-                    len(self.dataset),
-                    self.nsample,
-                    replace=self.sample_w_replacement,
+            # Use stratified sampling if labels are available
+            if self.labels is not None and len(self.labels) > 0:
+                self.inds_keep = self._stratified_subsample(rng)
+            else:
+                self.inds_keep = sorted(
+                    rng.choice(
+                        len(self.dataset),
+                        self.nsample,
+                        replace=self.sample_w_replacement,
+                    )
                 )
-            )
         else:
             self.inds_keep = np.arange(self.nsample)
 
@@ -263,6 +279,44 @@ class DataModule:
             self.inds_keep,
         )
 
+    def _stratified_subsample(self, rng):
+        unique_labels, class_counts = np.unique(self.labels, return_counts=True)
+
+        # Fast path: perfectly balanced
+        if len(np.unique(class_counts)) == 1:
+            logger.info(f"Dataset is balanced ({class_counts[0]} per class)")
+            is_balanced = True
+        else:
+            cv = class_counts.std() / class_counts.mean() * 100
+            is_balanced = cv < 5.0
+            logger.info(f"Dataset CV: {cv:.2f}% ")
+            logger.info(f"Dataset is {'balanced' if is_balanced else 'unbalanced'}")
+
+        n_per_class = self.nsample // len(unique_labels)
+        inds_keep = []
+
+        if is_balanced:
+            for label in unique_labels:
+                class_inds = np.where(self.labels == label)[0]
+                selected = rng.choice(
+                    class_inds, n_per_class, replace=self.sample_w_replacement
+                )
+                inds_keep.extend(selected)
+        else:
+            raw_counts = self.nsample * class_counts / class_counts.sum()
+            floor_counts = np.floor(raw_counts).astype(int)
+            deficit = self.nsample - floor_counts.sum()
+            top_classes = np.argsort(raw_counts - floor_counts)[::-1][:deficit]
+            floor_counts[top_classes] += 1
+
+            for label, n in zip(unique_labels, floor_counts):
+                class_inds = np.where(self.labels == label)[0]
+                n = min(n, len(class_inds)) if not self.sample_w_replacement else n
+                selected = rng.choice(class_inds, n, replace=self.sample_w_replacement)
+                inds_keep.extend(selected)
+
+        return sorted(inds_keep)
+
     def get_dataloader(self):
         """
         Create a single overall torch DataLoader over all items and assign it to
@@ -273,9 +327,9 @@ class DataModule:
         """
         self.nimages = len(self.dataset)
         if self.batch_size > self.nimages:
-            print(
+            logger.warning(
                 (
-                    "Warning: batch size is bigger than the data size. "
+                    "Batch size is bigger than the data size. "
                     "Setting batch size to data size"
                 )
             )
@@ -295,13 +349,20 @@ class DataModule:
             self.label_values = None
 
     def __str__(self):
+        if self.labels is not None:
+            _, counts = np.unique(self.labels, return_counts=True)
+            counts = counts.tolist()
+        else:
+            counts = "N/A"
+
         return (
             f"DataModule for path {self.path}\n"
             f"\tdataset name {self.dataset_name}\n"
             f"\timages {self.original_ds_len}, used {self.ds_len}\n"
             f"\tbatch size {self.batch_size}\n"
-            f"\tlabels {self.label_values}\n"
             f"\timages in loader: {len(self.dataloader.dataset)}"
+            f"\tlabels {self.label_values}\n"
+            f"\tsamples per label {counts}\n"
         )
 
 
