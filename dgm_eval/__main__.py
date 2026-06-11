@@ -1,3 +1,4 @@
+import logging
 import os
 import pathlib
 import sys
@@ -14,7 +15,14 @@ from .metrics import compute_inception_score
 from .models import MODELS, load_encoder
 from .representations import compute_reps
 from .samples import save_samples
-from .scores import run_compute_score, save_score, save_scores
+from .scores import SCORES, run_compute_score, save_score, save_scores
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(levelname)s] %(name)s.%(funcName)s: %(message)s",
+    force=True,
+)
 
 
 def get_inception_scores(args, device, num_workers):
@@ -110,22 +118,8 @@ parser.add_argument(
     "--metrics",
     type=str,
     nargs="+",
-    default=[
-        "fd",
-        "fd-infinity",
-        "kd",
-        "prdc",
-        "denscov",  # under development
-        "is",
-        "authpct",
-        "ct",
-        "ct-test",
-        "ct-modified",
-        "fls",
-        "fls-overfit",
-        "vendi",
-        "sw-approx",
-    ],
+    default=SCORES,
+    choices=SCORES,
     help="metrics to compute",
 )
 parser.add_argument(
@@ -156,6 +150,19 @@ parser.add_argument(
     type=int,
     default=10_000,
     help="Number of samples used for train, baseline, test, and generated sets for FLS",
+)
+parser.add_argument(
+    "--pr-curve-clf",
+    type=str,
+    default="knn",
+    choices=["cov", "ipr", "knn", "parzen"],
+    help="Classifier for PR curve",
+)
+parser.add_argument(
+    "--nlambdas",
+    type=int,
+    default=100,
+    help="Number of lambda values to use for pr-curve",
 )
 # Model args
 parser.add_argument(
@@ -233,7 +240,6 @@ parser.add_argument(
     default=None,
     choices=[
         "sweep-prdc-k",
-        "filter-knn-balls",
     ],
     help="Experiment to run.",
 )
@@ -279,13 +285,16 @@ parser.add_argument(
 
 
 def run(args):
-    print(
+    logger.info(
         "\nRunning evaluation...\n"
         "------------------------------------------------------------"
         "\nArguments:\n"
         f"\ttrain: {args.train}\n"
         f"\tgen: {args.gen}\n"
         f"\tmodel: {args.model}\n"
+        f"\tmetrics: {sorted(args.metrics)}\n"
+        f"\tnruns: {args.nruns}\n"
+        f"\texperiment: {args.xp}\n"
     )
 
     device, num_workers = get_device_and_num_workers(args.device, args.num_workers)
@@ -293,15 +302,15 @@ def run(args):
     # --- EXPERIMENTS ---
 
     if args.xp is not None:
-        print(f"Running experiment: {args.xp}\n")
         args.output_dir = os.path.join(args.output_dir, args.xp)
 
-    if args.xp in ["sweep-prdc-k", "filter-knn-balls"]:
-        args.metrics = ["prdc"]
+    if args.xp == "sweep-prdc-k":
+        if not set(args.metrics) & {"knn-filter", "prdc"}:
+            raise ValueError("XP 'sweep-prdc-k'  requires relevant metrics")
 
-    if args.xp in ["filter-knn-balls"]:
+    if "knn-filter" in args.metrics:
         if not args.per_label:
-            print("Settings args.per_label = True")
+            logger.warning("Enabling --per-label for knn-filter metric")
             args.per_label = True
 
     # --- QUICK INCEPTION SCORE OPTION ---
@@ -439,12 +448,16 @@ def run(args):
             )
 
     # --- SAVE SCORES ---
+    desc_model = args.model + "-" + args.arch if args.arch is not None else args.model
+    desc_metrics = "+".join(sorted(args.metrics))
+    if "pr-curve" in args.metrics:
+        desc_metrics = desc_metrics.replace("pr-curve", f"pr-curve-{args.pr_curve_clf}")
 
     desc = {
         "real_ds": real_dm.dataset_name,
         "gen_ds": "-".join(gen_dataset_names),
-        "model": args.model + "-" + args.arch if args.arch is not None else args.model,
-        "scores": "-".join(args.metrics),
+        "model": desc_model,
+        "scores": desc_metrics,
         "nimgs": len(real_dm.dataloader.dataset),
     }
     if args.random_labels:
@@ -452,11 +465,11 @@ def run(args):
     if args.nruns > 1:
         desc["nruns"] = args.nruns
 
-    if set(args.metrics) & {"fls", "fls-overfit", "prdc"}:
+    if set(args.metrics) & {"fls", "fls-overfit", "knn-filter", "prdc", "pr-curve"}:
         if args.reduced_n != args.nsample:
             desc["reduced"] = args.reduced_n
 
-    if set(args.metrics) & {"prdc"}:
+    if set(args.metrics) & {"knn-filter", "prdc", "pr-curve"}:
         desc["k"] = args.nearest_k
 
     save_scores(
