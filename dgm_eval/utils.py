@@ -24,6 +24,20 @@ def make_str(desc):
     return out_str.replace("-_", "_")
 
 
+def get_metric_substring(stem, metric):
+    for s in stem.split("_"):
+        if metric in s:
+            return s
+    raise ValueError(f"No substring containing '{metric}' in '{stem}'")
+
+
+def get_k_substring(stem):
+    for s in stem.split("_"):
+        if s.startswith("k-"):
+            return s
+    raise ValueError(f"No substring starting with 'k-' in '{stem}'")
+
+
 def extend_path(p):
     parts = []
     current = p

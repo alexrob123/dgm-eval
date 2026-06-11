@@ -10,9 +10,13 @@ notebooks/
 !notebooks/l2_memorization_check.ipynb
 
 out-data/
+out-figurify/
 out-latexify/
 
 scripts/test.sh
+
+PARAMETERS.md
+TODO.md
 
 
 # Python-generated files
