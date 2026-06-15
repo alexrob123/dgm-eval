@@ -158,12 +158,15 @@ def compute_scores(
         scores["kd-variance"] = mmd_values.std()
 
     if "knn-filter" in args.metrics and label_name == "overall":
-        logger.info("Computing knn-filter")
-
         if labels is None or labels[0] is None or labels[1] is None:
             raise ValueError("Metric 'knn-filter' requires labels")
 
         reduced_n = min(args.reduced_n, rr.shape[0], rg.shape[0])
+
+        logger.info(
+            f"Computing knn-filter with:\n\t samples = {reduced_n}\n\t k = {args.nearest_k}"
+        )
+
         rng = np.random.default_rng(seed)
         inds0 = rng.choice(rr.shape[0], reduced_n, replace=False)
         inds1 = rng.choice(rg.shape[0], reduced_n, replace=False)
@@ -178,9 +181,12 @@ def compute_scores(
         )
 
     if "prdc" in args.metrics:  # compute for overall and per label
-        logger.info("Computing PRDC")
-
         reduced_n = min(args.reduced_n, rr.shape[0], rg.shape[0])
+
+        logger.info(
+            f"Computing PRDC with:\n\t samples = {reduced_n}\n\t k = {args.nearest_k}"
+        )
+
         rng = np.random.default_rng(seed)
         inds0 = rng.choice(rr.shape[0], reduced_n, replace=False)
         inds1 = np.arange(rg.shape[0])
@@ -203,13 +209,15 @@ def compute_scores(
         scores.update(prdc_dict)
 
     if set(args.metrics) & {"pr-curve"}:  # compute for overall and per label
+        reduced_n = min(args.reduced_n, rr.shape[0], rg.shape[0])
+
         logger.info(
             f"Computing PR curve with:\n"
             f"\t classifier =  {args.pr_curve_clf}\n"
+            f"\t samples = {reduced_n}\n"
             f"\t k = {args.nearest_k}"
         )
 
-        reduced_n = min(args.reduced_n, rr.shape[0], rg.shape[0])
         rng = np.random.default_rng(seed)
         inds0 = rng.choice(rr.shape[0], reduced_n, replace=False)
         inds1 = rng.choice(rg.shape[0], reduced_n, replace=False)

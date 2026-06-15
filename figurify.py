@@ -462,7 +462,7 @@ def plot_pr_curve(
 
         # Save both PDF (for LaTeX) and PNG (for viewing)
         for fmt in ["pdf", "png"]:
-            out_path = outdir / f"{fname}_pr-curve.{fmt}"
+            out_path = outdir / f"pr-curve_{fname}.{fmt}"
             fig.savefig(out_path, dpi=300, bbox_inches="tight", format=fmt)
             logger.info(f"Saved PR curve figure to {out_path}")
     else:
