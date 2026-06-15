@@ -1,5 +1,7 @@
 import os
 
+from dgm_eval.metrics import METRICS
+
 
 def make_str(desc):
     out_str = ""
@@ -24,7 +26,15 @@ def make_str(desc):
     return out_str.replace("-_", "_")
 
 
-def get_metric_substring(stem, metric):
+def get_metric_substring(stem, metric=None):
+    if metric is None:
+        for m in METRICS:
+            try:
+                return get_metric_substring(stem, m)
+            except ValueError:
+                continue
+        raise ValueError(f"No metric from METRICS found in '{stem}'")
+
     for s in stem.split("_"):
         if metric in s:
             return s

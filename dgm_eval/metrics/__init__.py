@@ -14,3 +14,21 @@ from .pr_curve import compute_pr_curve
 from .prdc import compute_prdc
 from .sw import sw_approx
 from .vendi import compute_per_class_vendi_scores, compute_vendi_score
+
+METRICS = [
+    "authpct",
+    "ct",
+    "ct-test",
+    "ct-modified",
+    "fd",
+    "fd-infinity",
+    "fls",
+    "fls-overfit",
+    "is",
+    "kd",
+    "knn-filter",
+    "prdc",
+    "pr-curve",
+    "sw-approx",
+    "vendi",
+]

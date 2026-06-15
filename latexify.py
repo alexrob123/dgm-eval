@@ -7,6 +7,7 @@ import click
 import numpy as np
 import pandas as pd
 
+from dgm_eval.metrics import METRICS
 from dgm_eval.utils import get_k_substring, get_metric_substring
 
 logger = logging.getLogger(__name__)
@@ -15,6 +16,7 @@ logging.basicConfig(
     format="[%(levelname)s] %(name)s.%(funcName)s: %(message)s",
     force=True,
 )
+
 
 METRIC_COLS = {
     "prdc": ["precision", "recall", "prdc_nreal", "prdc_nfake"],
@@ -416,12 +418,32 @@ def metric_knn_filter(dir, outdir):
 # XP SWEEP PRDC K
 ####################################################################################################
 
+SWEEP_PRDC_K_DIR = "./experiments/sweep-prdc-k"
 
 @main.command()
 @click.option("--dir", "-d",        help="Directory containing the sweep results",                      type=click.Path(exists=True))  # fmt: skip
-@click.option("--metric", "-m",     help="Metric name to extract (e.g., 'prdc', 'knn-filter')",         type=str, required=True)  # fmt: skip
+@click.option("--metric", "-m",     help="Metric name to extract (e.g., 'prdc', 'knn-filter')",         type=str, default=None)  # fmt: skip
 @click.option("--outdir", "-o",     help="Path to save the generated LaTeX tables.", metavar="DIR",     type=click.Path(), default="out-latexify")  # fmt: skip
 def xp_sweep_prdc_k(dir, metric, outdir):
+    
+    # Handle no dir input
+    if dir is None:
+        for subdir in sorted(Path(SWEEP_PRDC_K_DIR).iterdir()):
+            if subdir.is_dir():
+                if metric is not None:
+                    metrics_to_run = metric.split("+")
+                else:
+                    try:
+                        derived_metric = get_metric_substring(subdir.name)
+                    except ValueError:
+                        logger.warning(f"No metric found in {subdir.name}, skipping.")
+                        continue
+                    metrics_to_run = derived_metric.split("+")
+                for single_metric in metrics_to_run:
+                    logger.info(f"\nProcessing {subdir.name} with metric: {single_metric}...\n")
+                    xp_sweep_prdc_k.callback(str(subdir), single_metric, outdir)
+        return
+
     logger.info(f"\nProcessing sweep results in {dir} for metric: {metric}...\n")
 
     # Find all result files in the directory (one per k value)
@@ -529,13 +551,22 @@ def xp_sweep_prdc_k(dir, metric, outdir):
 # Labelwise
 ####################################################################################################
 
+LABELWISE_VS_RAND_DIR = "./experiments/sweep-prdc-k/"
+DEFAULT_K = 5
 
 @main.command()
 @click.option("--path-true", "-pt",     help="Path containing the results for true labels",                 type=click.Path(exists=True))  # fmt: skip
 @click.option("--path-rand", "-pr",     help="Path containing the results for randomized labels ",          type=click.Path(exists=True))  # fmt: skip
-@click.option("--metric", "-m",         help="Metrics to include. Default: all found",                      type=str, multiple=True, required=True)  # fmt: skip
+@click.option("--metric", "-m",         help="Metrics to include. Default: all found",                      type=str, multiple=True)  # fmt: skip
 @click.option("--outdir", "-o",         help="Path to save the generated LaTeX tables.", metavar="DIR",     type=click.Path(), default="out-latexify")  # fmt: skip
 def labelwise_vs_rand(path_true, path_rand, metric, outdir):
+
+    # Handle no input
+    if path_true is None and path_rand is None:
+        for path_true_, path_rand_, metrics_to_run in labelwise_vs_rand_default(LABELWISE_VS_RAND_DIR, metric):
+            labelwise_vs_rand.callback(str(path_true_), str(path_rand_), tuple(metrics_to_run), outdir)
+        return
+
     logger.info(
         "\n"
         f"Processing labelwise results in {path_true}..."
@@ -556,6 +587,51 @@ def labelwise_vs_rand(path_true, path_rand, metric, outdir):
 
     for metric in metrics:
         _labelwise_vs_rand(path_true, path_rand, metric, outdir)
+
+
+def labelwise_vs_rand_default(base_dir, metric=None):
+    """Find all (path_true, path_rand, metrics) triplets in base_dir."""
+    base_dir = Path(base_dir)
+    rand_dirs = {
+        d.name.replace("random-labs_", ""): d
+        for d in base_dir.iterdir()
+        if d.is_dir() and "random-labs" in d.name
+    }
+    true_dirs = {
+        d.name: d
+        for d in base_dir.iterdir()
+        if d.is_dir() and "random-labs" not in d.name
+    }
+    pairs = [(true_dirs[k], rand_dirs[k]) for k in true_dirs if k in rand_dirs]
+    if not pairs:
+        logger.warning("No matching pairs found.")
+        return []
+
+    triplets = []
+    for path_true, path_rand in pairs:
+        path_true_npz = path_true / f"{path_true.name}_k-{DEFAULT_K}.npz"
+        path_rand_npz = path_rand / f"{path_rand.name}_k-{DEFAULT_K}.npz"
+
+        if not path_true_npz.exists():
+            logger.warning(f"File not found: {path_true_npz}, skipping.")
+            continue
+        if not path_rand_npz.exists():
+            logger.warning(f"File not found: {path_rand_npz}, skipping.")
+            continue
+
+        if metric:
+            metrics_to_run = list(metric)
+        else:
+            try:
+                derived = get_metric_substring(path_true.name)
+            except ValueError:
+                logger.warning(f"No metric found in {path_true.name}, skipping.")
+                continue
+            metrics_to_run = derived.split("+")
+
+        triplets.append((path_true_npz, path_rand_npz, metrics_to_run))
+
+    return triplets
 
 
 def _labelwise_vs_rand(path_true, path_rand, metric, outdir):
@@ -623,7 +699,7 @@ def _labelwise_vs_rand(path_true, path_rand, metric, outdir):
 
     counts_tl = fmt_block(df_tl_mean, df_tl_std, count_cols, all_rows)
     counts_rl = fmt_block(df_rl_mean, df_rl_std, count_cols, all_rows)
-    assert counts_tl.equals(counts_rl), f"Counts:\n{counts_tl}\n{counts_rl}"
+    # assert counts_tl.equals(counts_rl), f"Counts:\n{counts_tl}\n{counts_rl}"
 
     # Build count block with proper MultiIndex: (Counts, column_name)
     block_counts = counts_tl

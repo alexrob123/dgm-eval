@@ -475,6 +475,9 @@ def plot_pr_curve(
 # CLI
 ####################################################################################################
 
+PR_CURVE_DIR = "./experiments"
+PR_CURVE_METRICS = ["pr-curve-cov", "pr-curve-ipr", "pr-curve-kde", "pr-curve-knn"]
+
 
 @click.group()
 def main():
@@ -482,13 +485,21 @@ def main():
 
 
 @main.command()
-@click.option("--path", "-p",          help="Path to result .npz file",                          type=click.Path(exists=True), required=True)  # fmt: skip
+@click.option("--path", "-p",          help="Path to result .npz file",                          type=click.Path(exists=True), default=None)  # fmt: skip
 @click.option("--path-rand", "-r",     help="Path to random labels .npz file",                   type=click.Path(exists=True), default=None)  # fmt: skip
-@click.option("--metric", "-m",        help="Metric key (e.g., 'pr-curve-knn', 'pr-curve-ipr')", type=str, default="pr-curve-ipr")  # fmt: skip
+@click.option("--metric", "-m",        help="Metric key (e.g., 'pr-curve-knn', 'pr-curve-ipr')", type=str, default=None)  # fmt: skip
 @click.option("--outdir", "-o",        help="Directory to save the figure",                      type=click.Path(), default="out-figurify")  # fmt: skip
 @click.option("--plt-label", "-l",     help="Flag to display label-wise curves",                 is_flag=True, default=True)  # fmt: skip
 def pr_curve(path, metric, outdir, path_rand, plt_label):
+
+    if path is None:
+        for path_, path_rand_, metric_ in pr_curve_default(PR_CURVE_DIR, metric):
+            logger.info(f"Plotting PR curve from {path_} (metric: {metric_})...")
+            pr_curve.callback(str(path_), metric_, outdir, str(path_rand_), plt_label)
+        return
+
     logger.info(f"Plotting PR curve from {path} (metric: {metric})...")
+
     if path_rand:
         logger.info(f"Adding random labels curves from {path_rand}...")
 
@@ -499,6 +510,35 @@ def pr_curve(path, metric, outdir, path_rand, plt_label):
         path_rand=path_rand,
         label_flag=plt_label,
     )
+
+
+def pr_curve_default(base_dir, metric=None):
+    """Find all (path_true, path_rand, metric) triplets for pr-curve files in base_dir."""
+    base_dir = Path(base_dir)
+
+    all_npz = [f for f in base_dir.glob("*.npz") if "pr-curve" in f.name]
+
+    rand_files = {
+        f.name.replace("random-labs_", ""): f
+        for f in all_npz
+        if "random-labs" in f.name
+    }
+    true_files = {f.name: f for f in all_npz if "random-labs" not in f.name}
+
+    pairs = [(true_files[k], rand_files[k]) for k in true_files if k in rand_files]
+    if not pairs:
+        logger.warning("No matching pr-curve pairs found.")
+        return []
+
+    metrics_to_try = [metric] if metric else PR_CURVE_METRICS
+
+    triplets = []
+    for path_true, path_rand in pairs:
+        for m in metrics_to_try:
+            if m in path_true.name:
+                triplets.append((path_true, path_rand, m))
+
+    return triplets
 
 
 if __name__ == "__main__":
