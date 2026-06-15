@@ -3,7 +3,7 @@ import os
 import pathlib
 import sys
 from collections import defaultdict
-from pprint import pprint
+from pprint import pformat
 
 import numpy as np
 import pandas as pd
@@ -33,25 +33,6 @@ logging.basicConfig(
     format="[%(levelname)s] %(name)s.%(funcName)s: %(message)s",
     force=True,
 )
-
-SCORES = [
-    "authpct",
-    "ct",
-    "ct-test",
-    "ct-modified",
-    "denscov",  # under development
-    "fd",
-    "fd-infinity",
-    "fls",
-    "fls-overfit",
-    "is",
-    "kd",
-    "knn-filter",
-    "prdc",
-    "pr-curve",  # under development
-    "sw-approx",
-    "vendi",
-]
 
 LAMBDAS = np.tan(np.linspace(0, np.pi / 2, 100 + 1)[1:])
 
@@ -86,19 +67,19 @@ def compute_scores(
         print("Computing ct score \n", file=sys.stderr)
         scores["ct"] = compute_CTscore(rr, test_reps, rg)
 
-    if "ct-test" in args.metrics and label_name == "overall":
+    if "ct_test" in args.metrics and label_name == "overall":
         print(
             "Computing ct score, modified to identify mode collapse only \n",
             file=sys.stderr,
         )
-        scores["ct-test"] = compute_CTscore_mode(rr, test_reps, rg)
+        scores["ct_test"] = compute_CTscore_mode(rr, test_reps, rg)
 
-    if "ct-modified" in args.metrics and label_name == "overall":
+    if "ct_modified" in args.metrics and label_name == "overall":
         print(
             "Computing ct score, modified to identify memorization only \n",
             file=sys.stderr,
         )
-        scores["ct-modified"] = compute_CTscore_mem(rr, test_reps, rg)
+        scores["ct_modified"] = compute_CTscore_mem(rr, test_reps, rg)
 
     if "denscov" in args.metrics:
         raise NotImplementedError("denscov metric is currently not implemented")
@@ -107,15 +88,15 @@ def compute_scores(
         print("Computing FD \n", file=sys.stderr)
         scores["fd"] = compute_FD_with_reps(rr, rg)
 
-    if "fd-eff" in args.metrics and label_name == "overall":
+    if "fd_eff" in args.metrics and label_name == "overall":
         print("Computing Efficient FD \n", file=sys.stderr)
-        scores["fd-eff"] = compute_efficient_FD_with_reps(rr, rg)
+        scores["fd_eff"] = compute_efficient_FD_with_reps(rr, rg)
 
-    if "fd-infinity" in args.metrics and label_name == "overall":
-        print("Computing fd-infinity \n", file=sys.stderr)
-        scores["fd-infinity-value"] = compute_FD_infinity(rr, rg)
+    if "fd_infinity" in args.metrics and label_name == "overall":
+        print("Computing fd_infinity \n", file=sys.stderr)
+        scores["fd_infinity_value"] = compute_FD_infinity(rr, rg)
 
-    if set(args.metrics) & {"fls", "fls-overfit"} and label_name == "overall":
+    if set(args.metrics) & {"fls", "fls_overfit"} and label_name == "overall":
         rng = np.random.default_rng(seed)
 
         train_reps, gen_reps = rr, rg
@@ -143,8 +124,8 @@ def compute_scores(
                 test_reps,
                 gen_reps,
             )
-        if "fls-overfit" in args.metrics:
-            scores["fls-overfit"] = compute_fls_overfit(
+        if "fls_overfit" in args.metrics:
+            scores["fls_overfit"] = compute_fls_overfit(
                 train_reps,
                 baseline_reps,
                 test_reps,
@@ -154,24 +135,24 @@ def compute_scores(
     if "kd" in args.metrics and label_name == "overall":
         print("Computing KD \n", file=sys.stderr)
         mmd_values = compute_mmd(rr, rg)
-        scores["kd-value"] = mmd_values.mean()
-        scores["kd-variance"] = mmd_values.std()
+        scores["kd_value"] = mmd_values.mean()
+        scores["kd_variance"] = mmd_values.std()
 
-    if "knn-filter" in args.metrics and label_name == "overall":
+    if "knn_filter" in args.metrics and label_name == "overall":
         if labels is None or labels[0] is None or labels[1] is None:
-            raise ValueError("Metric 'knn-filter' requires labels")
+            raise ValueError("Metric 'knn_filter' requires labels")
 
         reduced_n = min(args.reduced_n, rr.shape[0], rg.shape[0])
 
         logger.info(
-            f"Computing knn-filter with:\n\t samples = {reduced_n}\n\t k = {args.nearest_k}"
+            f"Computing knn_filter with:\n\t samples = {reduced_n}\n\t k = {args.nearest_k}"
         )
 
         rng = np.random.default_rng(seed)
         inds0 = rng.choice(rr.shape[0], reduced_n, replace=False)
         inds1 = rng.choice(rg.shape[0], reduced_n, replace=False)
 
-        scores["knn-filter"] = compute_knn_filter(
+        scores["knn_filter"] = compute_knn_filter(
             rr[inds0],
             rg[inds1],
             labels[0][inds0],
@@ -208,7 +189,7 @@ def compute_scores(
         )
         scores.update(prdc_dict)
 
-    if set(args.metrics) & {"pr-curve"}:  # compute for overall and per label
+    if set(args.metrics) & {"pr_curve"}:  # compute for overall and per label
         reduced_n = min(args.reduced_n, rr.shape[0], rg.shape[0])
 
         logger.info(
@@ -235,20 +216,20 @@ def compute_scores(
             "precisions": precisions,
             "recalls": recalls,
         }
-        scores[f"pr-curve-{args.pr_curve_clf}"] = prc_dict
+        scores[f"pr_curve_{args.pr_curve_clf}"] = prc_dict
 
-    if "sw-approx" in args.metrics and label_name == "overall":
+    if "sw_approx" in args.metrics and label_name == "overall":
         print("Aprroximating Sliced W2.", file=sys.stderr)
-        scores["sw-approx"] = sw_approx(rr, rg)
+        scores["sw_approx"] = sw_approx(rr, rg)
 
     if "vendi" in args.metrics and label_name == "overall":
         print("Calculating diversity score", file=sys.stderr)
         # scores['vendi'] = compute_vendi_score(reps[1])
         vendi_scores = compute_per_class_vendi_scores(rg, labels[1])
-        scores["mean vendi per class"] = vendi_scores.mean()
+        scores["mean_vendi_per_class"] = vendi_scores.mean()
 
-    logger.info(f"{label_name} scores:")
-    pprint(scores)
+    logger.debug(f"{label_name} scores:")
+    logger.debug(pformat(scores))
 
     return scores, vendi_scores
 
@@ -312,7 +293,7 @@ def labelwise_setup(args, labels):
 def aggregate_labelwise_scores(run_scores):
     """Average label-* scores within a run into run_scores["agg"] (in place).
 
-    Handles scalars, arrays, and nested dicts (e.g., pr-curve results).
+    Handles scalars, arrays, and nested dicts (e.g., pr_curve results).
     """
     logger.info("Aggregating labelwise scores into 'agg' entry")
 
@@ -393,16 +374,16 @@ def _run_default(args, real_reps, fake_reps, test_reps, labels):
             vendi_scores = vs
 
         # Extract per-label results from knn-filter metric
-        if "knn-filter" in scores.keys():
-            keys = list(scores["knn-filter"].keys())
+        if "knn_filter" in scores.keys():
+            keys = list(scores["knn_filter"].keys())
             for k in keys:
                 if k.startswith("label-"):
-                    knn_filter_scores = scores["knn-filter"].pop(k)
+                    knn_filter_scores = scores["knn_filter"].pop(k)
                     run_scores[k] = {
-                        f"knn-filter-{k}": v for k, v in knn_filter_scores.items()
+                        f"knn_filter-{k}": v for k, v in knn_filter_scores.items()
                     }
-            knn_filter_scores = scores.pop("knn-filter")
-            scores.update({f"knn-filter-{k}": v for k, v in knn_filter_scores.items()})
+            knn_filter_scores = scores.pop("knn_filter")
+            scores.update({f"knn_filter-{k}": v for k, v in knn_filter_scores.items()})
 
         run_scores["overall"] = scores
 
@@ -428,8 +409,8 @@ def _run_default(args, real_reps, fake_reps, test_reps, labels):
         aggregate_labelwise_scores(run_scores)
         all_runs_scores.append(run_scores)
 
-        logger.info("Run scores:")
-        pprint(run_scores)
+        logger.debug("Run scores:")
+        logger.debug(pformat(run_scores))
 
     return all_runs_scores, vendi_scores
 
@@ -439,7 +420,7 @@ def run_compute_score(args, real_reps, fake_reps, test_reps, labels=None):
 
     Per-label groups, when --per-label is set, are derived by filtering these
     overall reps with the labels -- no separate per-label representations needed.
-    For knn-filter metric, all per-label results are computed in a single call.
+    For knn_filter metric, all per-label results are computed in a single call.
     """
     all_runs_scores, vendi_scores = _run_default(
         args,
@@ -462,15 +443,15 @@ def run_compute_score(args, real_reps, fake_reps, test_reps, labels=None):
             if metric == "realism":
                 mean_scores[metric] = values[-1]
                 continue
-            # values may be scalars or nested per-label dicts (knn-filter)
+            # values may be scalars or nested per-label dicts (knn_filter)
             mean_scores[metric], std_scores[metric] = aggregate_runs(values)
 
         all_scores[key] = mean_scores
         if args.nruns > 1:
             all_scores[f"{key}_std"] = std_scores
 
-    logger.info("Final scores:")
-    pprint(all_scores)
+    logger.debug("Final scores:")
+    logger.debug(pformat(all_scores))
 
     return all_scores, vendi_scores
 
@@ -496,17 +477,15 @@ def save_score(
     if ckpt is not None:
         ckpt_str = f"_ckpt-{os.path.splitext(os.path.basename(ckpt))[0]}"
 
-    metrics_str = "" if metrics is None else "_" + "-".join(metrics)
+    metrics_str = "" if metrics is None else "-" + "_".join(metrics)
     path_str = (
-        "-".join([extend_path(p) for p in path]) if path is not None else "overall"
+        "_".join([extend_path(p) for p in path]) if path is not None else "overall"
     )
 
     if is_only:
-        out_str = f"inception_score_{path_str}{ckpt_str}_nimage-{nsample}.txt"
+        out_str = f"inception_score-{path_str}{ckpt_str}_nimage-{nsample}.txt"
     else:
-        out_str = (
-            f"{model}_scores-{metrics_str}_{path_str}{ckpt_str}_nimage-{nsample}.txt"
-        )
+        out_str = f"{model}-{metrics_str}-{path_str}{ckpt_str}-nimage_{nsample}.txt"
 
     out_path = os.path.join(output_dir, out_str)
     pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -535,7 +514,7 @@ def save_scores(description, scores, args, is_only=False, vendi_scores={}):
     run_params["generated_dataset"] = run_params["gen"]
 
     ckpt_str = ""
-    pprint(scores)
+    logger.debug(pformat(scores))
 
     if is_only:
         description["scores"] = "is"
@@ -543,8 +522,8 @@ def save_scores(description, scores, args, is_only=False, vendi_scores={}):
     out_str = make_str(description)
 
     results_dir = args.output_dir
-    if args.xp in ["sweep-prdc-k"]:
-        results_dir = os.path.join(results_dir, out_str.split("_k-")[0])
+    if args.xp in ["sweep_prdc_k"]:
+        results_dir = os.path.join(results_dir, out_str.split("-k_")[0])
     pathlib.Path(results_dir).mkdir(parents=True, exist_ok=True)
 
     out_path = os.path.join(results_dir, out_str)
@@ -559,5 +538,5 @@ def save_scores(description, scores, args, is_only=False, vendi_scores={}):
 
         out_str = make_str(description)
         out_path = os.path.join(results_dir, out_str)
-        print(f"saving vendi score to {out_path}.csv", file=sys.stderr)
+        print(f"Saving vendi score to {out_path}.csv", file=sys.stderr)
         df.to_csv(f"{out_path}.csv")

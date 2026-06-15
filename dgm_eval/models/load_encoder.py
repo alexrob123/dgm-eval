@@ -12,7 +12,7 @@ from .pixel import PixelEncoder
 from .simclr import SimCLRResNetEncoder
 from .swav import ResNet50Encoder  # ResNet18Encoder, ResNet18MocoEncoder,
 
-MODELS = {
+MODEL_ENCODERS = {
     "inception": InceptionEncoder,
     "sinception": InceptionEncoder,
     "mae": VisionTransformerEncoder,
@@ -25,12 +25,14 @@ MODELS = {
     "simclr": SimCLRResNetEncoder,
 }
 
+MODELS = list(MODEL_ENCODERS.keys())
+
 
 def load_encoder(model_name, device, **kwargs):
     """Load feature extractor"""
     print("Loading Model...", file=sys.stderr)
 
-    model_cls = MODELS[model_name]
+    model_cls = MODEL_ENCODERS.get(model_name)
 
     # Get names of model_cls.setup arguments
     signature = inspect.signature(model_cls.setup)

@@ -7,23 +7,26 @@ def make_str(desc):
     out_str = ""
 
     for k, v in desc.items():
-        if k in ["real_ds"]:
-            out_str += v
-            out_str += "-vs-"
+        if k in ["train_ds"]:
+            out_str += v.replace("-", "_")
+            out_str += "_vs_"
         elif k in ["gen_ds"]:
-            out_str += v
-            out_str += "_"
-        elif k in ["model", "scores"]:
-            out_str += v
-            out_str += "_"
+            out_str += v.replace("-", "_")
+            out_str += "-"
+        elif k in ["model", "metrics"]:
+            out_str += v.replace("-", "_")
+            out_str += "-"
+        elif not v:
+            out_str += f"{k}".replace("-", "_")
+            out_str += "-"
         else:
-            out_str += f"{k}-{v}"
-            out_str += "_"
+            out_str += f"{k}_{v}".replace("-", "_")
+            out_str += "-"
 
-    if out_str.endswith("_"):
+    if out_str.endswith("-"):
         out_str = out_str[:-1]
 
-    return out_str.replace("-_", "_")
+    return out_str.replace("_-", "-")
 
 
 def get_metric_substring(stem, metric=None):
@@ -35,17 +38,17 @@ def get_metric_substring(stem, metric=None):
                 continue
         raise ValueError(f"No metric from METRICS found in '{stem}'")
 
-    for s in stem.split("_"):
+    for s in stem.split("-"):
         if metric in s:
             return s
     raise ValueError(f"No substring containing '{metric}' in '{stem}'")
 
 
-def get_k_substring(stem):
-    for s in stem.split("_"):
-        if s.startswith("k-"):
+def get_nearest_k_substring(stem):
+    for s in stem.split("-"):
+        if s.startswith("k_"):
             return s
-    raise ValueError(f"No substring starting with 'k-' in '{stem}'")
+    raise ValueError(f"No substring starting with 'k_' in '{stem}'")
 
 
 def extend_path(p):
@@ -63,4 +66,4 @@ def extend_path(p):
         else:
             break
 
-    return "-".join(reversed(parts))
+    return "_".join(reversed(parts))

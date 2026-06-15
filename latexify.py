@@ -7,8 +7,7 @@ import click
 import numpy as np
 import pandas as pd
 
-from dgm_eval.metrics import METRICS
-from dgm_eval.utils import get_k_substring, get_metric_substring
+from dgm_eval.utils import get_metric_substring, get_nearest_k_substring
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -20,11 +19,11 @@ logging.basicConfig(
 
 METRIC_COLS = {
     "prdc": ["precision", "recall", "prdc_nreal", "prdc_nfake"],
-    "knn-filter": [
-        "knn-filter-p",
-        "knn-filter-r",
-        "knn-filter-nreal",
-        "knn-filter-nfake",
+    "knn_filter": [
+        "knn_filter_p",
+        "knn_filter_r",
+        "knn_filter_nreal",
+        "knn_filter_nfake",
     ],
 }
 
@@ -35,10 +34,10 @@ METRIC_RENAME = {
     "coverage": "C",
     "prdc_nreal": "N",
     "prdc_nfake": "M",
-    "knn-filter-p": "P (knn-filter)",
-    "knn-filter-r": "R (knn-filter)",
-    "knn-filter-nreal": "N",
-    "knn-filter-nfake": "M",
+    "knn_filter_p": "P (knn_filter)",
+    "knn_filter_r": "R (knn_filter)",
+    "knn_filter_nreal": "N",
+    "knn_filter_nfake": "M",
 }
 
 PRECISION_EST_STR = r"$\hat \alpha (P_X, Q_X)$"
@@ -312,10 +311,10 @@ def xp(path, outdir):
 
 
 @main.command()
-@click.option("--dir", "-d",        help="Directory containing the knn-filter metric results",                      type=click.Path(exists=True))  # fmt: skip
+@click.option("--dir", "-d",        help="Directory containing the knn_filter metric results",                      type=click.Path(exists=True))  # fmt: skip
 @click.option("--outdir", "-o",     help="Path to save the generated LaTeX tables.", metavar="DIR",     type=click.Path(), default="out-latexify")  # fmt: skip
 def metric_knn_filter(dir, outdir):
-    logger.info(f"Processing knn-filter metric results in {dir}...")
+    logger.info(f"Processing knn_filter metric results in {dir}...")
 
     paths = []
     for fname in os.listdir(dir):
@@ -325,7 +324,7 @@ def metric_knn_filter(dir, outdir):
             logger.info(f"Found result file: {path}")
     paths.sort()
 
-    fname = "metric-knn-filter_" + Path(paths[0]).stem.split("_k-")[0]
+    fname = "metric-knn_filter_" + Path(paths[0]).stem.split("_k-")[0]
     logger.info(f"Derived LaTeX table name: {fname}")
 
     metric = "P"  # report precision only
@@ -420,12 +419,13 @@ def metric_knn_filter(dir, outdir):
 
 SWEEP_PRDC_K_DIR = "./experiments/sweep-prdc-k"
 
+
 @main.command()
 @click.option("--dir", "-d",        help="Directory containing the sweep results",                      type=click.Path(exists=True))  # fmt: skip
-@click.option("--metric", "-m",     help="Metric name to extract (e.g., 'prdc', 'knn-filter')",         type=str, default=None)  # fmt: skip
+@click.option("--metric", "-m",     help="Metric name to extract (e.g., 'prdc', 'knn_filter')",         type=str, default=None)  # fmt: skip
 @click.option("--outdir", "-o",     help="Path to save the generated LaTeX tables.", metavar="DIR",     type=click.Path(), default="out-latexify")  # fmt: skip
 def xp_sweep_prdc_k(dir, metric, outdir):
-    
+
     # Handle no dir input
     if dir is None:
         for subdir in sorted(Path(SWEEP_PRDC_K_DIR).iterdir()):
@@ -440,7 +440,9 @@ def xp_sweep_prdc_k(dir, metric, outdir):
                         continue
                     metrics_to_run = derived_metric.split("+")
                 for single_metric in metrics_to_run:
-                    logger.info(f"\nProcessing {subdir.name} with metric: {single_metric}...\n")
+                    logger.info(
+                        f"\nProcessing {subdir.name} with metric: {single_metric}...\n"
+                    )
                     xp_sweep_prdc_k.callback(str(subdir), single_metric, outdir)
         return
 
@@ -467,14 +469,14 @@ def xp_sweep_prdc_k(dir, metric, outdir):
     if cols_for_metric is None:
         raise ValueError(f"Unsupported metric: {metric}")
 
-    # Determine which column to display (precision or knn-filter-p)
-    display_col = "precision" if metric == "prdc" else "knn-filter-p"
+    # Determine which column to display (precision or knn_filter_p)
+    display_col = "precision" if metric == "prdc" else "knn_filter_p"
 
     # Get results per k, format cells, and build the final DataFrame
     records = []
     for path in paths:
         # Extract k value and use it for sorting
-        k_val = get_k_substring(Path(path).stem).split("-")[1]
+        k_val = get_nearest_k_substring(Path(path).stem).split("-")[1]
         k_sort = pd.to_numeric(k_val, errors="coerce")
         k_val = r"$\sqrt{n}$" if k_val == "None" else k_val
         logger.info(f"Fetching results for k = {k_val}")
@@ -551,8 +553,9 @@ def xp_sweep_prdc_k(dir, metric, outdir):
 # Labelwise
 ####################################################################################################
 
-LABELWISE_VS_RAND_DIR = "./experiments/sweep-prdc-k/"
+LABELWISE_VS_RAND_DIR = "./out/sweep-prdc-k/"
 DEFAULT_K = 5
+
 
 @main.command()
 @click.option("--path-true", "-pt",     help="Path containing the results for true labels",                 type=click.Path(exists=True))  # fmt: skip
@@ -563,8 +566,12 @@ def labelwise_vs_rand(path_true, path_rand, metric, outdir):
 
     # Handle no input
     if path_true is None and path_rand is None:
-        for path_true_, path_rand_, metrics_to_run in labelwise_vs_rand_default(LABELWISE_VS_RAND_DIR, metric):
-            labelwise_vs_rand.callback(str(path_true_), str(path_rand_), tuple(metrics_to_run), outdir)
+        for path_true_, path_rand_, metrics_to_run in labelwise_vs_rand_default(
+            LABELWISE_VS_RAND_DIR, metric
+        ):
+            labelwise_vs_rand.callback(
+                str(path_true_), str(path_rand_), tuple(metrics_to_run), outdir
+            )
         return
 
     logger.info(
@@ -579,7 +586,7 @@ def labelwise_vs_rand(path_true, path_rand, metric, outdir):
 
     stem_true = Path(path_true).stem
     stem_rand = Path(path_rand).stem
-    assert stem_true == stem_rand.replace("random-labs_", "")
+    assert stem_true == stem_rand.replace("-random_labs", "")
 
     for m in metrics:
         assert m in stem_true, f"Metric '{m}' not found in filename '{stem_true}'"
@@ -593,14 +600,14 @@ def labelwise_vs_rand_default(base_dir, metric=None):
     """Find all (path_true, path_rand, metrics) triplets in base_dir."""
     base_dir = Path(base_dir)
     rand_dirs = {
-        d.name.replace("random-labs_", ""): d
+        d.name.replace("-random_labs", ""): d
         for d in base_dir.iterdir()
-        if d.is_dir() and "random-labs" in d.name
+        if d.is_dir() and "random_labs" in d.name
     }
     true_dirs = {
         d.name: d
         for d in base_dir.iterdir()
-        if d.is_dir() and "random-labs" not in d.name
+        if d.is_dir() and "random_labs" not in d.name
     }
     pairs = [(true_dirs[k], rand_dirs[k]) for k in true_dirs if k in rand_dirs]
     if not pairs:
@@ -652,11 +659,11 @@ def _labelwise_vs_rand(path_true, path_rand, metric, outdir):
             "precision",
             # "recall",
         ],
-        "knn-filter": [
-            "knn-filter-nreal",
-            "knn-filter-nfake",
-            "knn-filter-p",
-            # "knn-filter-r",
+        "knn_filter": [
+            "knn_filter_nreal",
+            "knn_filter_nfake",
+            "knn_filter_p",
+            # "knn_filter_r",
         ],
     }
     target_cols = metrics_map.get(metric, [metric.upper()])

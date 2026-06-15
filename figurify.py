@@ -5,6 +5,8 @@ import click
 import matplotlib.pyplot as plt
 import numpy as np
 
+from dgm_eval.metrics.pr_curve import PR_CURVE_CLFS
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO,
@@ -33,6 +35,9 @@ plt.rcParams.update(
         "font.sans-serif": ["Computer Modern Roman"],
     }
 )
+
+PR_CURVE_DIR = "./out"
+PR_CURVE_METRICS = ["pr_curve_" + clf for clf in PR_CURVE_CLFS]
 
 
 # Mathematical notation for labels
@@ -401,7 +406,7 @@ def _create_pr_figure(curves, curves_rand=None, label_flag=True):
 
 def plot_pr_curve(
     path,
-    metric_key="pr-curve-knn",
+    metric_key="pr_curve_knn",
     outdir=None,
     path_rand=None,
     label_flag=True,
@@ -413,7 +418,7 @@ def plot_pr_curve(
     path : str | Path
         Path to the result .npz file containing pr-curve results
     metric_key : str
-        The pr-curve metric key to plot (e.g., 'pr-curve-knn', 'pr-curve-ipr')
+        The pr_curve metric key to plot (e.g., 'pr_curve_knn', 'pr_curve_ipr')
     outdir : str | Path, optional
         Directory to save the figure. If None, displays the plot.
     path_rand : str | Path, optional
@@ -435,10 +440,10 @@ def plot_pr_curve(
     if path_rand is not None:
         stem = Path(path).stem
         stem_rand = Path(path_rand).stem
-        stem_rand_drop = stem_rand.replace("random-labs_", "")
+        stem_rand_drop = stem_rand.replace("-random_labs", "")
         if stem != stem_rand_drop:
             logger.warning(
-                f"Filenames don't match after removing 'random-labs_': "
+                f"Filenames don't match after removing '-random_labs': "
                 f"'{stem}' vs '{stem_rand_drop}'. "
                 f"Experiment setup may be different."
             )
@@ -475,9 +480,6 @@ def plot_pr_curve(
 # CLI
 ####################################################################################################
 
-PR_CURVE_DIR = "./experiments"
-PR_CURVE_METRICS = ["pr-curve-cov", "pr-curve-ipr", "pr-curve-kde", "pr-curve-knn"]
-
 
 @click.group()
 def main():
@@ -487,7 +489,7 @@ def main():
 @main.command()
 @click.option("--path", "-p",          help="Path to result .npz file",                          type=click.Path(exists=True), default=None)  # fmt: skip
 @click.option("--path-rand", "-r",     help="Path to random labels .npz file",                   type=click.Path(exists=True), default=None)  # fmt: skip
-@click.option("--metric", "-m",        help="Metric key (e.g., 'pr-curve-knn', 'pr-curve-ipr')", type=str, default=None)  # fmt: skip
+@click.option("--metric", "-m",        help="Metric key (e.g., 'pr_curve_knn', 'pr_curve_ipr')", type=str, default=None)  # fmt: skip
 @click.option("--outdir", "-o",        help="Directory to save the figure",                      type=click.Path(), default="out-figurify")  # fmt: skip
 @click.option("--plt-label", "-l",     help="Flag to display label-wise curves",                 is_flag=True, default=True)  # fmt: skip
 def pr_curve(path, metric, outdir, path_rand, plt_label):
@@ -519,11 +521,11 @@ def pr_curve_default(base_dir, metric=None):
     all_npz = [f for f in base_dir.glob("*.npz") if "pr-curve" in f.name]
 
     rand_files = {
-        f.name.replace("random-labs_", ""): f
+        f.name.replace("-random_labs", ""): f
         for f in all_npz
-        if "random-labs" in f.name
+        if "random_labs" in f.name
     }
-    true_files = {f.name: f for f in all_npz if "random-labs" not in f.name}
+    true_files = {f.name: f for f in all_npz if "random_labs" not in f.name}
 
     pairs = [(true_files[k], rand_files[k]) for k in true_files if k in rand_files]
     if not pairs:
@@ -542,4 +544,5 @@ def pr_curve_default(base_dir, metric=None):
 
 
 if __name__ == "__main__":
+    main()
     main()

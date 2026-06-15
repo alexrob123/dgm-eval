@@ -6,6 +6,8 @@ https://arxiv.org/abs/2405.01611
 import numpy as np
 from sklearn.neighbors import NearestNeighbors
 
+PR_CURVE_CLFS = ["cov", "ipr", "knn", "parzen"]
+
 # --------------------------------------------------------------------------------
 # Coverage
 # (Naem 2020)
