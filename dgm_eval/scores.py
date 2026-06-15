@@ -52,6 +52,10 @@ SCORES = [
     "sw-approx",
     "vendi",
 ]
+
+LAMBDAS = np.tan(np.linspace(0, np.pi / 2, 100 + 1)[1:])
+
+
 ####################################################################################################
 # Compute
 ####################################################################################################
@@ -210,13 +214,10 @@ def compute_scores(
         inds0 = rng.choice(rr.shape[0], reduced_n, replace=False)
         inds1 = rng.choice(rg.shape[0], reduced_n, replace=False)
 
-        tans = np.linspace(0, np.pi / 2, args.nlambdas, endpoint=False)
-        lambdas = np.tan(tans)
-
         precisions, recalls = compute_pr_curve(
             rr[inds0],
             rg[inds1],
-            lambdas=lambdas,
+            lambdas=LAMBDAS,
             clf=args.pr_curve_clf,
             k=args.nearest_k,
         )

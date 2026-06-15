@@ -158,12 +158,6 @@ parser.add_argument(
     choices=["cov", "ipr", "knn", "parzen"],
     help="Classifier for PR curve",
 )
-parser.add_argument(
-    "--nlambdas",
-    type=int,
-    default=100,
-    help="Number of lambda values to use for pr-curve",
-)
 # Model args
 parser.add_argument(
     "--model",
