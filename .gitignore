@@ -6,9 +6,12 @@ data/
 
 experiments/
 
+logs/
+
 notebooks/
 !notebooks/l2_memorization_check.ipynb
 
+out/
 out-data/
 out-figurify/
 out-latexify/
