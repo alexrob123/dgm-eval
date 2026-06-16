@@ -8,7 +8,6 @@ from .fd import (
 )
 from .fls import compute_fls, compute_fls_overfit
 from .inception_score import compute_inception_score
-from .knn_filter import compute_knn_filter
 from .mmd import compute_mmd
 from .pr_curve import compute_pr_curve
 from .prdc import compute_prdc
@@ -27,7 +26,6 @@ METRICS = [
     "fls_overfit",
     "is",
     "kd",
-    "knn_filter",
     "prdc",
     "pr_curve",
     "sw_approx",

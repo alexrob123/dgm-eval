@@ -57,7 +57,7 @@ def compute_NND(input_features, nearest_k):
     return radii
 
 
-def compute_prdc(real_features, fake_features, nearest_k=None, realism=False):
+def compute_prdc_old(real_features, fake_features, nearest_k=None, realism=False):
     """
     Computes precision, recall, density, and coverage given two manifolds.
 
@@ -92,12 +92,12 @@ def compute_prdc(real_features, fake_features, nearest_k=None, realism=False):
     C = (distance_real_fake.min(axis=1) < real_NND).mean()
 
     d = dict(
-        prdc_nreal=n_real,
-        prdc_nfake=n_fake,
-        precision=P,
-        recall=R,
-        density=D,
-        coverage=C,
+        P=P,
+        R=R,
+        D=D,
+        C=C,
+        n_real=n_real,
+        n_fake=n_fake,
     )
 
     if realism:
@@ -112,5 +112,107 @@ def compute_prdc(real_features, fake_features, nearest_k=None, realism=False):
         d["realism"] = (
             np.expand_dims(real_NND[mask], axis=1) / distance_real_fake[mask]
         ).max(axis=0)
+
+    return d
+
+
+def compute_prdc(
+    real_feats,
+    fake_feats,
+    real_labs=None,
+    fake_labs=None,
+    nearest_k=None,
+    filter_labelwise=False,
+    realism=False,
+):
+    """
+    Default nearest_k is set to sqrt(N).
+    """
+
+    if realism:
+        raise NotImplementedError("Realism score not implemented.")
+
+    if filter_labelwise and (real_labs is None or fake_labs is None):
+        raise ValueError("If `filter_labelwise` needs `real_labs` and `fake_labs`.")
+
+    n_real, n_fake = int(real_feats.shape[0]), int(fake_feats.shape[0])
+
+    if nearest_k is None:
+        nearest_k = int(np.sqrt(n_real))
+        print(f"k is None. Setting it to sqrt of num samples: {nearest_k}")
+
+    # Compute Balls
+    radii_real = compute_NND(real_feats, nearest_k)
+    radii_fake = compute_NND(fake_feats, nearest_k)
+    dist_real_fake = compute_pairwise_distance(real_feats, fake_feats)
+
+    # Compute overall PRDC
+    P = (dist_real_fake < np.expand_dims(radii_real, axis=1)).any(axis=0).mean()
+    R = (dist_real_fake < np.expand_dims(radii_fake, axis=0)).any(axis=1).mean()
+    D = (1.0 / float(nearest_k)) * (
+        dist_real_fake < np.expand_dims(radii_real, axis=1)
+    ).sum(axis=0).mean()
+    C = (dist_real_fake.min(axis=1) < radii_real).mean()
+
+    d = dict(
+        P=P,
+        R=R,
+        D=D,
+        C=C,
+        n_real=n_real,
+        n_fake=n_fake,
+    )
+
+    if filter_labelwise:
+        n_labels = np.max([np.max(real_labs), np.max(fake_labs)]) + 1
+
+        if (np.bincount(real_labs, minlength=n_labels) < nearest_k + 1).any():
+            raise ValueError(
+                f"Not enough real samples for some labels to compute knn balls. "
+                f"Found {np.bincount(real_labs, minlength=n_labels)}, but need at least {nearest_k + 1}."
+            )
+        if (np.bincount(fake_labs, minlength=n_labels) < nearest_k + 1).any():
+            raise ValueError(
+                f"Not enough fake samples for some labels to compute knn balls. "
+                f"Found {np.bincount(fake_labs, minlength=n_labels)}, but need at least {nearest_k + 1}."
+            )
+
+        for k in range(n_labels):
+            label_key = f"label-{k}"
+            print(f"\n--- {label_key} ---")
+
+            mask_real_k = real_labs == k
+            mask_fake_k = fake_labs == k
+
+            n_real_k = np.sum(mask_real_k)
+            n_fake_k = np.sum(mask_fake_k)
+
+            real_radii_k = radii_real[mask_real_k]
+            fake_radii_k = radii_fake[mask_fake_k]
+            dist_real_fake_k = dist_real_fake[np.ix_(mask_real_k, mask_fake_k)]
+
+            P_k = (
+                (dist_real_fake_k < np.expand_dims(real_radii_k, axis=1))
+                .any(axis=0)
+                .mean()
+            )
+            R_k = (
+                (dist_real_fake_k < np.expand_dims(fake_radii_k, axis=0))
+                .any(axis=1)
+                .mean()
+            )
+            D_k = (1.0 / float(nearest_k)) * (
+                dist_real_fake_k < np.expand_dims(real_radii_k, axis=1)
+            ).sum(axis=0).mean()
+            C_k = (dist_real_fake_k.min(axis=1) < real_radii_k).mean()
+
+            d[label_key] = dict(
+                P=P_k,
+                R=R_k,
+                D=D_k,
+                C=C_k,
+                n_real=n_real_k,
+                n_fake=n_fake_k,
+            )
 
     return d

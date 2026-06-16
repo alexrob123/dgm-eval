@@ -1,3 +1,4 @@
+import functools
 import logging
 import os
 import pathlib
@@ -108,7 +109,8 @@ def get_inception_scores(args, device, num_workers):
 # Setup
 @click.option("--xp",                   type=click.Choice(["sweep_prdc_k"]), default=None,      help="Experiment to run.")  # fmt: skip
 @click.option("--nruns",                type=int,   default=1,                                  help="Number of runs to average scores over.")  # fmt: skip
-@click.option("--per-label",            is_flag=True, default=False,                            help="Whether to compute metrics per label. Only implemented for prdc and vendi currently.")  # fmt: skip
+@click.option("--per-label",            is_flag=True, default=False,                            help="Whether to compute metrics per label. Not implement for every metric .")  # fmt: skip
+@click.option("--label-method",         type=click.Choice(["filter", "sweep"]), default=None,   help="How to handle labelwise metric computation. Only if --per-label is set.")  # fmt: skip
 @click.option("--random-labels",        is_flag=True, default=False,                            help="Replace the real labels with a fresh random permutation, varied across runs while the subsampling is held fixed.")  # fmt: skip
 # Hardware
 @click.option("--device",               type=str,   default=None,                               help="Device to use. Like cuda, cuda:0 or cpu")  # fmt: skip
@@ -147,6 +149,7 @@ def main(
     xp,
     nruns,
     per_label,
+    label_method,
     random_labels,
     # Hardware
     device,
@@ -192,6 +195,7 @@ def main(
     args.xp = xp
     args.nruns = nruns
     args.per_label = per_label
+    args.label_method = label_method
     args.random_labels = random_labels
     # Hardware
     args.device = device
@@ -201,6 +205,16 @@ def main(
     # Output
     args.save_imgs = save_imgs
     args.output_dir = output_dir
+
+    if args.per_label and args.label_method is None:
+        raise ValueError("If --per-label is set, --label-method must be specified.")
+
+    if args.xp is not None:
+        args.output_dir = os.path.join(args.output_dir, args.xp)
+
+    if args.xp == "sweep_prdc_k":
+        if not set(args.metrics) & {"prdc", "pr_curve"}:
+            raise ValueError("XP 'sweep_prdc_k'  requires relevant metrics")
 
     run(args)
 
@@ -219,20 +233,6 @@ def run(args):
     )
 
     device, num_workers = get_device_and_num_workers(args.device, args.num_workers)
-
-    # --- EXPERIMENTS ---
-
-    if args.xp is not None:
-        args.output_dir = os.path.join(args.output_dir, args.xp)
-
-    if args.xp == "sweep_prdc_k":
-        if not set(args.metrics) & {"knn_filter", "prdc"}:
-            raise ValueError("XP 'sweep_prdc_k'  requires relevant metrics")
-
-    if "knn_filter" in args.metrics:
-        if not args.per_label:
-            logger.warning("Enabling --per-label for knn_filter metric")
-            args.per_label = True
 
     # --- QUICK INCEPTION SCORE OPTION ---
 
@@ -386,11 +386,11 @@ def run(args):
     if args.nruns > 1:
         desc["nruns"] = args.nruns
 
-    if set(args.metrics) & {"fls", "fls_overfit", "knn_filter", "prdc", "pr_curve"}:
+    if set(args.metrics) & {"fls", "fls_overfit", "prdc", "pr_curve"}:
         if args.reduced_n != args.nsample:
             desc["reduced"] = args.reduced_n
 
-    if set(args.metrics) & {"knn_filter", "prdc", "pr_curve"}:
+    if set(args.metrics) & {"prdc", "pr_curve"}:
         desc["k"] = args.nearest_k
 
     if args.random_labels:

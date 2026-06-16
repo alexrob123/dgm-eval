@@ -18,7 +18,6 @@ from .metrics import (
     compute_FD_with_reps,
     compute_fls,
     compute_fls_overfit,
-    compute_knn_filter,
     compute_mmd,
     compute_per_class_vendi_scores,
     compute_pr_curve,
@@ -48,7 +47,7 @@ def compute_scores(
     rg,
     test_reps,
     labels=None,
-    label_name="overall",
+    label_key="overall",
     seed=0,
 ):
     """
@@ -59,22 +58,22 @@ def compute_scores(
     scores = {}
     vendi_scores = {}
 
-    if "authpct" in args.metrics and label_name == "overall":
+    if "authpct" in args.metrics and label_key == "overall":
         print("Computing authpct \n", file=sys.stderr)
         scores["authpct"] = compute_authpct(rr, rg)
 
-    if "ct" in args.metrics and label_name == "overall":
+    if "ct" in args.metrics and label_key == "overall":
         print("Computing ct score \n", file=sys.stderr)
         scores["ct"] = compute_CTscore(rr, test_reps, rg)
 
-    if "ct_test" in args.metrics and label_name == "overall":
+    if "ct_test" in args.metrics and label_key == "overall":
         print(
             "Computing ct score, modified to identify mode collapse only \n",
             file=sys.stderr,
         )
         scores["ct_test"] = compute_CTscore_mode(rr, test_reps, rg)
 
-    if "ct_modified" in args.metrics and label_name == "overall":
+    if "ct_modified" in args.metrics and label_key == "overall":
         print(
             "Computing ct score, modified to identify memorization only \n",
             file=sys.stderr,
@@ -84,19 +83,19 @@ def compute_scores(
     if "denscov" in args.metrics:
         raise NotImplementedError("denscov metric is currently not implemented")
 
-    if "fd" in args.metrics and label_name == "overall":
+    if "fd" in args.metrics and label_key == "overall":
         print("Computing FD \n", file=sys.stderr)
         scores["fd"] = compute_FD_with_reps(rr, rg)
 
-    if "fd_eff" in args.metrics and label_name == "overall":
+    if "fd_eff" in args.metrics and label_key == "overall":
         print("Computing Efficient FD \n", file=sys.stderr)
         scores["fd_eff"] = compute_efficient_FD_with_reps(rr, rg)
 
-    if "fd_infinity" in args.metrics and label_name == "overall":
+    if "fd_infinity" in args.metrics and label_key == "overall":
         print("Computing fd_infinity \n", file=sys.stderr)
         scores["fd_infinity_value"] = compute_FD_infinity(rr, rg)
 
-    if set(args.metrics) & {"fls", "fls_overfit"} and label_name == "overall":
+    if set(args.metrics) & {"fls", "fls_overfit"} and label_key == "overall":
         rng = np.random.default_rng(seed)
 
         train_reps, gen_reps = rr, rg
@@ -132,34 +131,11 @@ def compute_scores(
                 gen_reps,
             )
 
-    if "kd" in args.metrics and label_name == "overall":
+    if "kd" in args.metrics and label_key == "overall":
         print("Computing KD \n", file=sys.stderr)
         mmd_values = compute_mmd(rr, rg)
         scores["kd_value"] = mmd_values.mean()
         scores["kd_variance"] = mmd_values.std()
-
-    if "knn_filter" in args.metrics and label_name == "overall":
-        if labels is None or labels[0] is None or labels[1] is None:
-            raise ValueError("Metric 'knn_filter' requires labels")
-
-        reduced_n = min(args.reduced_n, rr.shape[0], rg.shape[0])
-
-        logger.info(
-            f"Computing knn_filter with:\n\t samples = {reduced_n}\n\t k = {args.nearest_k}"
-        )
-
-        rng = np.random.default_rng(seed)
-        inds0 = rng.choice(rr.shape[0], reduced_n, replace=False)
-        inds1 = rng.choice(rg.shape[0], reduced_n, replace=False)
-
-        scores["knn_filter"] = compute_knn_filter(
-            rr[inds0],
-            rg[inds1],
-            labels[0][inds0],
-            labels[1][inds1],
-            nlabels=max(np.max(labels[0]), np.max(labels[1])) + 1,
-            nearest_k=args.nearest_k,
-        )
 
     if "prdc" in args.metrics:  # compute for overall and per label
         reduced_n = min(args.reduced_n, rr.shape[0], rg.shape[0])
@@ -170,23 +146,18 @@ def compute_scores(
 
         rng = np.random.default_rng(seed)
         inds0 = rng.choice(rr.shape[0], reduced_n, replace=False)
-        inds1 = np.arange(rg.shape[0])
+        inds1 = rng.choice(rg.shape[0], reduced_n, replace=False)
 
-        if "realism" not in args.metrics:
-            # Realism is returned for each sample, so do not shuffle if this metric is desired.
-            # Else filenames and realism scores will not align
-            inds1 = rng.choice(
-                inds1,
-                min(inds1.shape[0], reduced_n),
-                replace=False,
-            )
+        # if "realism" not in args.metrics: # rebuild in another if, keep all generated do not downsample
+        # Realism is returned for each sample, so do not shuffle if this metric is desired.
+        # Else filenames and realism scores will not align
+        # inds1 = rng.choice(
+        #     inds1,
+        #     min(inds1.shape[0], reduced_n),
+        #     replace=False,
+        # )
 
-        prdc_dict = compute_prdc(
-            rr[inds0],
-            rg[inds1],
-            nearest_k=args.nearest_k,
-            realism=True if "realism" in args.metrics else False,
-        )
+        prdc_dict = compute_prdc(rr[inds0], rg[inds1], nearest_k=args.nearest_k)
         scores.update(prdc_dict)
 
     if set(args.metrics) & {"pr_curve"}:  # compute for overall and per label
@@ -218,17 +189,17 @@ def compute_scores(
         }
         scores[f"pr_curve_{args.pr_curve_clf}"] = prc_dict
 
-    if "sw_approx" in args.metrics and label_name == "overall":
+    if "sw_approx" in args.metrics and label_key == "overall":
         print("Aprroximating Sliced W2.", file=sys.stderr)
         scores["sw_approx"] = sw_approx(rr, rg)
 
-    if "vendi" in args.metrics and label_name == "overall":
+    if "vendi" in args.metrics and label_key == "overall":
         print("Calculating diversity score", file=sys.stderr)
         # scores['vendi'] = compute_vendi_score(reps[1])
         vendi_scores = compute_per_class_vendi_scores(rg, labels[1])
         scores["mean_vendi_per_class"] = vendi_scores.mean()
 
-    logger.debug(f"{label_name} scores:")
+    logger.debug(f"{label_key} scores:")
     logger.debug(pformat(scores))
 
     return scores, vendi_scores
@@ -290,10 +261,38 @@ def labelwise_setup(args, labels):
     return real_labs, gen_labs, np.unique(real_labs)
 
 
+def unpack_nested_labelwise_metric(scores, metric_name, run_scores):
+    """Unpack metric with per-label results from scores into run_scores.
+
+    Converts a metric dict that contains both overall and per-label results
+    (keyed by "label-i") into the run_scores structure where each label_key
+    gets metric entries with the metric_name prefix.
+
+    Args:
+        scores: dict containing metric_name with overall + per-label results
+        metric_name: str, key in scores (e.g., "prdc")
+        run_scores: dict to update with unpacked results
+    """
+    if metric_name not in scores:
+        return
+
+    metric_data = scores.pop(metric_name)
+    label_keys = [k for k in metric_data.keys() if k.startswith("label-")]
+
+    # Unpack per-label results
+    for label_key in label_keys:
+        label_data = metric_data.pop(label_key)
+        run_scores[label_key] = {f"{metric_name}-{k}": v for k, v in label_data.items()}
+
+    # Merge overall results into scores with metric prefix
+    scores.update({f"{metric_name}-{k}": v for k, v in metric_data.items()})
+
+
 def aggregate_labelwise_scores(run_scores):
     """Average label-* scores within a run into run_scores["agg"] (in place).
 
     Handles scalars, arrays, and nested dicts (e.g., pr_curve results).
+    Also computes run_scores["diff"] as the difference between overall and agg.
     """
     logger.info("Aggregating labelwise scores into 'agg' entry")
 
@@ -303,11 +302,15 @@ def aggregate_labelwise_scores(run_scores):
 
     sample_keys = [k for k in run_scores[label_keys[0]] if k != "realism"]
     run_scores["agg"] = {}
+    run_scores["diff"] = {}
 
     for metric_name in sample_keys:
         metric_values = [run_scores[lk][metric_name] for lk in label_keys]
         mean, _ = aggregate_runs(metric_values)
         run_scores["agg"][metric_name] = mean
+        # Compute diff as overall - agg
+        overall_value = run_scores["overall"][metric_name]
+        run_scores["diff"][metric_name] = overall_value - mean
 
 
 ####################################################################################################
@@ -367,32 +370,20 @@ def _run_default(args, real_reps, fake_reps, test_reps, labels):
             fake_reps,
             test_reps,
             labels=[real_labs_, fake_labs],
-            label_name="overall",
+            label_key="overall",
             seed=seed_,
         )
         if vs:
             vendi_scores = vs
 
-        # Extract per-label results from knn-filter metric
-        if "knn_filter" in scores.keys():
-            keys = list(scores["knn_filter"].keys())
-            for k in keys:
-                if k.startswith("label-"):
-                    knn_filter_scores = scores["knn_filter"].pop(k)
-                    run_scores[k] = {
-                        f"knn_filter-{k}": v for k, v in knn_filter_scores.items()
-                    }
-            knn_filter_scores = scores.pop("knn_filter")
-            scores.update({f"knn_filter-{k}": v for k, v in knn_filter_scores.items()})
-
         run_scores["overall"] = scores
 
         for idx, lab in enumerate(label_values):
-            label = f"label-{idx}"
+            label_key = f"label-{idx}"
             rr = real_reps[real_labs_ == lab]
             rg = fake_reps[fake_labs == lab]
 
-            print(f"\n--- {label} ---")
+            print(f"\n--- {label_key} ---")
             print(f"samples with shapes {rr.shape} and {rg.shape}\n")
 
             scores, _ = compute_scores(
@@ -401,10 +392,10 @@ def _run_default(args, real_reps, fake_reps, test_reps, labels):
                 rg,
                 test_reps,
                 labels=None,
-                label_name=label,
+                label_key=label_key,
                 seed=seed_,
             )
-            run_scores[label].update(scores)
+            run_scores[label_key].update(scores)
 
         aggregate_labelwise_scores(run_scores)
         all_runs_scores.append(run_scores)

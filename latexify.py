@@ -18,26 +18,16 @@ logging.basicConfig(
 
 
 METRIC_COLS = {
-    "prdc": ["precision", "recall", "prdc_nreal", "prdc_nfake"],
-    "knn_filter": [
-        "knn_filter_p",
-        "knn_filter_r",
-        "knn_filter_nreal",
-        "knn_filter_nfake",
-    ],
+    "prdc": ["P", "R", "n_real", "n_fake"],
 }
 
 METRIC_RENAME = {
-    "precision": "P",
-    "recall": "R",
-    "density": "D",
-    "coverage": "C",
-    "prdc_nreal": "N",
-    "prdc_nfake": "M",
-    "knn_filter_p": "P (knn_filter)",
-    "knn_filter_r": "R (knn_filter)",
-    "knn_filter_nreal": "N",
-    "knn_filter_nfake": "M",
+    "P": "P",
+    "R": "R",
+    "D": "D",
+    "C": "C",
+    "n_real": "N",
+    "n_fake": "M",
 }
 
 PRECISION_EST_STR = r"$\hat \alpha (P_X, Q_X)$"
@@ -249,19 +239,12 @@ def xp(path, outdir):
     df_std = df.loc[std_rows].rename(index=lambda x: x.removesuffix("_std")).copy()
 
     metric_cols = [
-        "precision",
-        # "recall",
-        # "density",
-        # "coverage",
+        "P",
+        # "R",
+        # "D",
+        # "C",
     ]
-    count_col = "prdc_nreal"  # prdc_nreal == prdc_nfake always
-
-    # diff row: overall - agg, no std
-    df_mean.loc["diff", metric_cols] = (
-        df_mean.loc["overall", metric_cols] - df_mean.loc["agg", metric_cols]
-    )
-    df_mean.loc["diff", count_col] = np.nan
-    df_std.loc["diff"] = np.nan
+    count_col = "n_real"  # n_real == n_fake always
 
     # format cells
     col_keys = [count_col] + metric_cols
@@ -274,7 +257,7 @@ def xp(path, outdir):
     )
 
     # Display the 5 best and 5 worst labels by precision (ordered by index)
-    label_scores = [df_mean.loc[f"label-{i}", "precision"] for i in range(num_labels)]
+    label_scores = [df_mean.loc[f"label-{i}", "P"] for i in range(num_labels)]
     selected_labels = select_best_worst_indexes(label_scores, n_each=5)
     label_rows = [f"label-{i}" for i in selected_labels]
     row_keys = ["overall"] + label_rows + ["agg", "diff"]
@@ -287,10 +270,10 @@ def xp(path, outdir):
     }
     col_rename = {
         count_col: "N",
-        "precision": "P",
-        "recall": "R",
-        "density": "D",
-        "coverage": "C",
+        "P": "P",
+        "R": "R",
+        "D": "D",
+        "C": "C",
     }
 
     df_final = df_display.loc[row_keys, col_keys].rename(
@@ -310,109 +293,6 @@ def xp(path, outdir):
 ####################################################################################################
 
 
-@main.command()
-@click.option("--dir", "-d",        help="Directory containing the knn_filter metric results",                      type=click.Path(exists=True))  # fmt: skip
-@click.option("--outdir", "-o",     help="Path to save the generated LaTeX tables.", metavar="DIR",     type=click.Path(), default="out-latexify")  # fmt: skip
-def metric_knn_filter(dir, outdir):
-    logger.info(f"Processing knn_filter metric results in {dir}...")
-
-    paths = []
-    for fname in os.listdir(dir):
-        if fname.endswith(".npz"):
-            path = os.path.join(dir, fname)
-            paths.append(path)
-            logger.info(f"Found result file: {path}")
-    paths.sort()
-
-    fname = "metric-knn_filter_" + Path(paths[0]).stem.split("_k-")[0]
-    logger.info(f"Derived LaTeX table name: {fname}")
-
-    metric = "P"  # report precision only
-
-    records = []  # one row per k: overall / avg / diff precision
-    for path in paths:
-        k_val = Path(path).stem.split("-")[-1]  # "1", "2", "None"
-        k_sort = pd.to_numeric(k_val, errors="coerce")
-        k_val = r"$\sqrt{n}$" if k_val == "None" else k_val
-        logger.info(f"Fetching results for k = {k_val}")
-
-        data = np.load(path, allow_pickle=True)
-        run = data["scores"].item()["run00"]
-
-        # knn-balls-filtering nests every per-label result under "overall"; the
-        # across-run std (if any) mirrors that structure under "overall_std".
-        overall = run["overall"]
-        overall_std = run.get("overall_std", {})
-        label_keys = [k for k in overall if k.startswith("label-")]
-
-        df_mean = pd.DataFrame(
-            index=["overall", "avg", "diff"], columns=[metric], dtype=float
-        )
-        df_std = pd.DataFrame(
-            index=["overall", "avg", "diff"], columns=[metric], dtype=float
-        )
-
-        # overall: precision of the marginal distributions (has an across-run std)
-        df_mean.loc["overall", metric] = overall["precision"]
-        df_std.loc["overall", metric] = (
-            overall_std.get("precision", np.nan) if overall_std else np.nan
-        )
-
-        # avg: mean over the per-label precisions (mean only; the std of the
-        # mean-over-labels is not recoverable from the per-label stds)
-        df_mean.loc["avg", metric] = np.mean(
-            [overall[k]["precision"] for k in label_keys]
-        )
-        df_std.loc["avg", metric] = np.nan
-
-        # diff: overall - avg (mean only)
-        df_mean.loc["diff", metric] = (
-            df_mean.loc["overall", metric] - df_mean.loc["avg", metric]
-        )
-        df_std.loc["diff", metric] = np.nan
-
-        records.append(
-            {
-                "k": k_val,
-                "k_sort": k_sort,
-                "overall": fmt_cell("overall", metric, df_mean, df_std),
-                "avg": fmt_cell("avg", metric, df_mean, df_std),
-                "diff": fmt_cell("diff", metric, df_mean, df_std),
-            }
-        )
-
-    df_final = (
-        pd.DataFrame(records)
-        .sort_values("k_sort")
-        .drop(columns="k_sort")
-        .set_index("k")
-        .rename(
-            columns={
-                "overall": PRECISION_EST_STR,
-                "avg": AVG_COND_PRECISION_EST_STR,
-                "diff": DIFF_STR,
-            }
-        )
-    )
-    df_final.index.name = "k"
-
-    format_kwargs = {"na_rep": ""}
-    to_latex_kwargs = {"column_format": "c" * (len(df_final.columns) + 1)}
-
-    if outdir is not None:
-        outdir = Path(outdir).expanduser()
-        outdir.mkdir(parents=True, exist_ok=True)
-        save_latex_table(
-            df_final,
-            outdir=outdir,
-            fname=fname,
-            format_kwargs=format_kwargs,
-            to_latex_kwargs=to_latex_kwargs,
-        )
-
-    return df_final, fname
-
-
 ####################################################################################################
 # XP SWEEP PRDC K
 ####################################################################################################
@@ -422,7 +302,7 @@ SWEEP_PRDC_K_DIR = "./experiments/sweep-prdc-k"
 
 @main.command()
 @click.option("--dir", "-d",        help="Directory containing the sweep results",                      type=click.Path(exists=True))  # fmt: skip
-@click.option("--metric", "-m",     help="Metric name to extract (e.g., 'prdc', 'knn_filter')",         type=str, default=None)  # fmt: skip
+@click.option("--metric", "-m",     help="Metric name to extract (e.g., 'prdc')",         type=str, default=None)  # fmt: skip
 @click.option("--outdir", "-o",     help="Path to save the generated LaTeX tables.", metavar="DIR",     type=click.Path(), default="out-latexify")  # fmt: skip
 def xp_sweep_prdc_k(dir, metric, outdir):
 
@@ -470,7 +350,7 @@ def xp_sweep_prdc_k(dir, metric, outdir):
         raise ValueError(f"Unsupported metric: {metric}")
 
     # Determine which column to display (precision or knn_filter_p)
-    display_col = "precision" if metric == "prdc" else "knn_filter_p"
+    display_col = "P" if metric == "prdc" else "knn_filter_p"
 
     # Get results per k, format cells, and build the final DataFrame
     records = []
@@ -497,13 +377,6 @@ def xp_sweep_prdc_k(dir, metric, outdir):
 
         # Update display_col to use renamed column name
         display_col_renamed = METRIC_RENAME.get(display_col, display_col)
-
-        # diff: overall - agg (mean only, no std), matching the xp table
-        df_mean.loc["diff", display_col_renamed] = (
-            df_mean.loc["overall", display_col_renamed]
-            - df_mean.loc["agg", display_col_renamed]
-        )
-        df_std.loc["diff", display_col_renamed] = np.nan
 
         records.append(
             {
@@ -654,16 +527,10 @@ def _labelwise_vs_rand(path_true, path_rand, metric, outdir):
     # Maps metric names to their column names(used for filtering and ordering)
     metrics_map = {
         "prdc": [
-            "prdc_nreal",
-            "prdc_nfake",
-            "precision",
-            # "recall",
-        ],
-        "knn_filter": [
-            "knn_filter_nreal",
-            "knn_filter_nfake",
-            "knn_filter_p",
-            # "knn_filter_r",
+            "n_real",
+            "n_fake",
+            "P",
+            # "R",
         ],
     }
     target_cols = metrics_map.get(metric, [metric.upper()])
@@ -688,7 +555,7 @@ def _labelwise_vs_rand(path_true, path_rand, metric, outdir):
     num_labels = num_labels_tl
 
     # Get labelwise rows, keep only the 5 best and 5 worst by the selected metric
-    ordering_cols = [col for col in cols if "nreal" not in col and "nfake" not in col]
+    ordering_cols = [col for col in cols if "n_real" not in col and "n_fake" not in col]
     ordering_score = [
         df_tl_mean.loc[f"label-{i}", ordering_cols[0]] for i in range(num_labels)
     ]
@@ -701,7 +568,7 @@ def _labelwise_vs_rand(path_true, path_rand, metric, outdir):
     # --- Groups ---
 
     # Count block
-    count_cols = [c for c in cols if "nreal" in c or "nfake" in c]
+    count_cols = [c for c in cols if "n_real" in c or "n_fake" in c]
     score_cols = [c for c in cols if c not in count_cols]
 
     counts_tl = fmt_block(df_tl_mean, df_tl_std, count_cols, all_rows)
