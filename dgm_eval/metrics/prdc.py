@@ -5,10 +5,18 @@ MIT license
 Modified to also report realism score from https://arxiv.org/abs/1904.06991
 """
 
+import logging
 import sys
 
 import numpy as np
 import sklearn.metrics
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(levelname)s] %(name)s.%(funcName)s: %(message)s",
+    force=True,
+)
 
 __all__ = ["compute_prdc"]
 
@@ -122,7 +130,7 @@ def compute_prdc(
     real_labs=None,
     fake_labs=None,
     nearest_k=None,
-    filter_labelwise=False,
+    derive_labelwise=False,
     realism=False,
 ):
     """
@@ -132,8 +140,8 @@ def compute_prdc(
     if realism:
         raise NotImplementedError("Realism score not implemented.")
 
-    if filter_labelwise and (real_labs is None or fake_labs is None):
-        raise ValueError("If `filter_labelwise` needs `real_labs` and `fake_labs`.")
+    if derive_labelwise and (real_labs is None or fake_labs is None):
+        raise ValueError("Arg `derive_labelwise` needs `real_labs` and `fake_labs`.")
 
     n_real, n_fake = int(real_feats.shape[0]), int(fake_feats.shape[0])
 
@@ -161,31 +169,38 @@ def compute_prdc(
         C=C,
         n_real=n_real,
         n_fake=n_fake,
+        param_k=nearest_k,
     )
 
-    if filter_labelwise:
+    if derive_labelwise:
         n_labels = np.max([np.max(real_labs), np.max(fake_labs)]) + 1
-
-        if (np.bincount(real_labs, minlength=n_labels) < nearest_k + 1).any():
-            raise ValueError(
-                f"Not enough real samples for some labels to compute knn balls. "
-                f"Found {np.bincount(real_labs, minlength=n_labels)}, but need at least {nearest_k + 1}."
-            )
-        if (np.bincount(fake_labs, minlength=n_labels) < nearest_k + 1).any():
-            raise ValueError(
-                f"Not enough fake samples for some labels to compute knn balls. "
-                f"Found {np.bincount(fake_labs, minlength=n_labels)}, but need at least {nearest_k + 1}."
-            )
 
         for k in range(n_labels):
             label_key = f"label-{k}"
-            print(f"\n--- {label_key} ---")
+            print(f"\n--- {label_key} (rcf) ---")
 
             mask_real_k = real_labs == k
             mask_fake_k = fake_labs == k
 
             n_real_k = np.sum(mask_real_k)
             n_fake_k = np.sum(mask_fake_k)
+
+            # Return NaN if insufficient samples for this label
+            if n_real_k < nearest_k + 1 or n_fake_k < nearest_k + 1:
+                logger.warning(
+                    f"{label_key}: Insufficient samples (real: {n_real_k}, fake: {n_fake_k}, "
+                    f"need: {nearest_k + 1}). Returning NaN."
+                )
+                d[label_key] = dict(
+                    P=np.nan,
+                    R=np.nan,
+                    D=np.nan,
+                    C=np.nan,
+                    n_real=n_real_k,
+                    n_fake=n_fake_k,
+                    param_k=nearest_k,
+                )
+                continue
 
             real_radii_k = radii_real[mask_real_k]
             fake_radii_k = radii_fake[mask_fake_k]
@@ -213,6 +228,7 @@ def compute_prdc(
                 C=C_k,
                 n_real=n_real_k,
                 n_fake=n_fake_k,
+                param_k=nearest_k,
             )
 
     return d

@@ -3,8 +3,18 @@ Sykes 2024
 https://arxiv.org/abs/2405.01611
 """
 
+import logging
+
 import numpy as np
 from sklearn.neighbors import NearestNeighbors
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(levelname)s] %(name)s.%(funcName)s: %(message)s",
+    force=True,
+)
+
 
 PR_CURVE_CLFS = ["cov", "ipr", "knn", "parzen"]
 
@@ -212,7 +222,7 @@ SCORE = {
 }
 
 
-def compute_pr_curve(
+def pr_curve(
     X: np.ndarray,
     Y: np.ndarray,
     lambdas: np.ndarray,
@@ -231,3 +241,116 @@ def compute_pr_curve(
     recalls = precisions / lambdas  # (L,)
 
     return precisions, recalls
+
+
+def compute_pr_curve(
+    real_feats: np.ndarray,
+    fake_feats: np.ndarray,
+    lambdas: np.ndarray,
+    clf: str,
+    nearest_k: int,
+    real_labs=None,
+    fake_labs=None,
+    derive_labelwise=False,
+):
+    """Compute precision-recall curve, optionally with per-label breakdown.
+
+    Args:
+        real_feats: Real features (N_real, D)
+        fake_feats: Fake features (N_fake, D)
+        lambdas: Lambda thresholds for risk computation
+        clf: Classifier name ('cov', 'ipr', 'knn', 'parzen')
+        nearest_k: Number of neighbors
+        real_labs: Real sample labels, shape (N_real,). Required if derive_labelwise=True
+        fake_labs: Fake sample labels, shape (N_fake,). Required if derive_labelwise=True
+        derive_labelwise: If True, compute basis once and derive per-label metrics
+
+    Returns:
+        dict with keys:
+            - 'precisions': overall precisions
+            - 'recalls': overall recalls
+            - 'label-i': per-label dict (if derive_labelwise=True)
+    """
+
+    if derive_labelwise and (real_labs is None or fake_labs is None):
+        raise ValueError("Arg `derive_labelwise` needs `real_labs` and `fake_labs`.")
+
+    n_real, n_fake = int(real_feats.shape[0]), int(fake_feats.shape[0])
+
+    if nearest_k is None:
+        nearest_k = int(np.sqrt(n_real))
+        print(f"k is None. Setting it to sqrt of num samples: {nearest_k}")
+
+    P_scores = SCORE[clf](real_feats, real_feats, fake_feats, nearest_k)  # (N_real,)
+    Q_scores = SCORE[clf](fake_feats, real_feats, fake_feats, nearest_k)  # (N_fake,)
+
+    thresholds = 1.0 / lambdas  # (L,)
+    fpr = (P_scores[:, None] < thresholds[None, :]).mean(axis=0)  # (L,)
+    fnr = (Q_scores[:, None] >= thresholds[None, :]).mean(axis=0)  # (L,)
+
+    risk = lambdas[:, None] * fpr[None, :] + fnr[None, :]  # (L, L)
+    precisions = risk.min(axis=1)  # (L,)
+    recalls = precisions / lambdas  # (L,)
+
+    d = dict(
+        P=precisions,
+        R=recalls,
+        n_real=n_real,
+        n_fake=n_fake,
+        param_k=nearest_k,
+    )
+
+    if derive_labelwise:
+        n_labels = np.max([np.max(real_labs), np.max(fake_labs)]) + 1
+
+        for k in range(n_labels):
+            label_key = f"label-{k}"
+            print(f"\n--- {label_key} (rcf) ---")
+
+            mask_real_k = real_labs == k
+            mask_fake_k = fake_labs == k
+
+            n_real_k = np.sum(mask_real_k)
+            n_fake_k = np.sum(mask_fake_k)
+
+            # Return NaN if insufficient samples for this label
+            if n_real_k < nearest_k + 1 or n_fake_k < nearest_k + 1:
+                logger.warning(
+                    f"{label_key}: Insufficient samples (real: {n_real_k}, fake: {n_fake_k}, "
+                    f"need: {nearest_k + 1}). Returning NaN."
+                )
+                d[label_key] = dict(
+                    P=np.nan,
+                    R=np.nan,
+                    n_real=n_real_k,
+                    n_fake=n_fake_k,
+                    param_k=nearest_k,
+                )
+                continue
+
+            P_scores_k = P_scores[mask_real_k]
+            Q_scores_k = Q_scores[mask_fake_k]
+            # Recompute scores using only label-k samples to match labelwise PRDC behavior
+            # P_scores_k = SCORE[clf](
+            #     real_feats[mask_real_k], real_feats[mask_real_k], fake_feats[mask_fake_k], nearest_k
+            # )
+            # Q_scores_k = SCORE[clf](
+            #     fake_feats[mask_fake_k], real_feats[mask_real_k], fake_feats[mask_fake_k], nearest_k
+            # )
+
+            fpr_k = (P_scores_k[:, None] < thresholds[None, :]).mean(axis=0)
+            fnr_k = (Q_scores_k[:, None] >= thresholds[None, :]).mean(axis=0)
+
+            risk_k = lambdas[:, None] * fpr_k[None, :] + fnr_k[None, :]
+            precisions_k = risk_k.min(axis=1)
+            recalls_k = precisions_k / lambdas
+
+            d[label_key] = dict(
+                P=precisions_k,
+                R=recalls_k,
+                n_real=n_real_k,
+                n_fake=n_fake_k,
+                param_k=nearest_k,
+            )
+
+    return d

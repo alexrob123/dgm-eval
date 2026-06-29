@@ -35,6 +35,79 @@ logging.basicConfig(
 
 LAMBDAS = np.tan(np.linspace(0, np.pi / 2, 100 + 1)[1:])
 
+####################################################################################################
+# Aggregate
+# Compute
+# Labels
+# Randomness
+# Run
+# Save
+####################################################################################################
+
+
+####################################################################################################
+# Aggregate
+####################################################################################################
+
+
+def aggregate(values):
+    """Aggregate one metric across runs into (mean, std).
+
+    Handles plain scalars as well as nested dicts (e.g. per-label score dicts),
+    and array-valued metrics (e.g. precision/recall curves).
+    For array-valued metrics, aggregates per-point across runs.
+    Handles NaN values from runs with insufficient samples.
+    """
+    if isinstance(values[0], dict):
+        mean, std = {}, {}
+        for k in values[0]:
+            mean[k], std[k] = aggregate([v[k] for v in values])
+        return mean, std
+
+    arr = np.array(values)
+    # If arr is 2D+, it's an array-valued metric: aggregate per-point (along axis 0)
+    # If arr is 1D, it's scalar values: aggregate globally
+    # Use nanmean/nanstd to ignore NaN values from failed runs (insufficient samples)
+    if arr.ndim >= 2:
+        return np.nanmean(arr, axis=0), np.nanstd(arr, axis=0)
+    else:
+        return np.nanmean(arr), np.nanstd(arr)
+
+
+def aggregate_runwise_scores(all_runs_scores, args):
+    """Aggregate scores across multiple runs into mean and std.
+
+    Takes per-run scores (list of dicts with keys: overall, label-i, agg, diff)
+    and computes mean and std across runs for each metric and label.
+
+    Args:
+        all_runs_scores: list of dicts, one per run, each containing {label_key: {metric: value}}
+        args: args object with nruns attribute
+
+    Returns:
+        all_scores: dict with aggregated results {label_key: {metric: mean_value, metric_std: std_value}}
+    """
+    all_scores = {}
+    all_keys = all_runs_scores[0].keys()
+
+    for key in all_keys:  # overall, label-i, agg, diff
+        all_metrics = all_runs_scores[0][key].keys()
+        mean_scores, std_scores = {}, {}
+
+        for metric in all_metrics:
+            values = [run[key][metric] for run in all_runs_scores]
+            if metric == "realism":
+                mean_scores[metric] = values[-1]
+                continue
+            # values may be scalars or nested per-label dicts (knn_filter)
+            mean_scores[metric], std_scores[metric] = aggregate(values)
+
+        all_scores[key] = mean_scores
+        if args.nruns > 1:
+            all_scores[f"{key}_std"] = std_scores
+
+    return all_scores
+
 
 ####################################################################################################
 # Compute
@@ -46,7 +119,7 @@ def compute_scores(
     rr,
     rg,
     test_reps,
-    labels=None,
+    label_setup=None,
     label_key="overall",
     seed=0,
 ):
@@ -54,6 +127,9 @@ def compute_scores(
     reps: list of two arrays corresponding to real reps and gen reps, each of shape (Nimage, ndim)
     labels: array of shape (Nimage,) with class labels for generated samples, if available
     """
+
+    if label_setup is not None:
+        real_labs, fake_labs, labels = label_setup
 
     scores = {}
     vendi_scores = {}
@@ -141,13 +217,41 @@ def compute_scores(
         reduced_n = min(args.reduced_n, rr.shape[0], rg.shape[0])
 
         logger.info(
-            f"Computing PRDC with:\n\t samples = {reduced_n}\n\t k = {args.nearest_k}"
+            f"Computing PRDC with:\n"
+            f"\t samples = {reduced_n}\n"
+            f"\t k = {args.nearest_k}\n"
+            + (f"\t label_method = {args.label_method}" if args.per_label else "")
         )
 
         rng = np.random.default_rng(seed)
         inds0 = rng.choice(rr.shape[0], reduced_n, replace=False)
         inds1 = rng.choice(rg.shape[0], reduced_n, replace=False)
 
+        scores["prdc"] = compute_prdc(
+            rr[inds0],
+            rg[inds1],
+            nearest_k=args.nearest_k,
+            **{
+                "derive_labelwise": True,
+                "real_labs": real_labs[inds0],
+                "fake_labs": fake_labs[inds1],
+            }
+            if args.label_method == "rcf"
+            else {},
+        )
+
+        if args.label_method == "rfc":
+            for idx, lab in enumerate(labels):
+                label_key = f"label-{idx}"
+                print(f"\n--- {label_key} (rfc) ---")
+
+                scores["prdc"][label_key] = compute_prdc(
+                    rr[inds0][real_labs[inds0] == lab],
+                    rg[inds1][fake_labs[inds1] == lab],
+                    nearest_k=args.nearest_k,
+                )
+
+        # FIX: move realism to its own metric
         # if "realism" not in args.metrics: # rebuild in another if, keep all generated do not downsample
         # Realism is returned for each sample, so do not shuffle if this metric is desired.
         # Else filenames and realism scores will not align
@@ -157,37 +261,48 @@ def compute_scores(
         #     replace=False,
         # )
 
-        prdc_dict = compute_prdc(rr[inds0], rg[inds1], nearest_k=args.nearest_k)
-        scores.update(prdc_dict)
-
     if set(args.metrics) & {"pr_curve"}:  # compute for overall and per label
         reduced_n = min(args.reduced_n, rr.shape[0], rg.shape[0])
 
         logger.info(
-            f"Computing PR curve with:\n"
+            "Computing PR curve with:\n"
             f"\t classifier =  {args.pr_curve_clf}\n"
             f"\t samples = {reduced_n}\n"
-            f"\t k = {args.nearest_k}"
+            f"\t k = {args.nearest_k}\n"
+            + (f"\t label_method = {args.label_method}" if args.per_label else "")
         )
 
         rng = np.random.default_rng(seed)
         inds0 = rng.choice(rr.shape[0], reduced_n, replace=False)
         inds1 = rng.choice(rg.shape[0], reduced_n, replace=False)
 
-        precisions, recalls = compute_pr_curve(
+        scores[f"pr_curve_{args.pr_curve_clf}"] = compute_pr_curve(
             rr[inds0],
             rg[inds1],
-            lambdas=LAMBDAS,
+            nearest_k=args.nearest_k,
             clf=args.pr_curve_clf,
-            k=args.nearest_k,
+            lambdas=LAMBDAS,
+            **{
+                "derive_labelwise": True,
+                "real_labs": real_labs[inds0],
+                "fake_labs": fake_labs[inds1],
+            }
+            if args.label_method == "rcf"
+            else {},
         )
-        prc_dict = {
-            "nreal": rr[inds0].shape[0],  # not modfified inside `compute_pr_curve`
-            "nfake": rg[inds1].shape[0],  # not modfified inside `compute_pr_curve`
-            "precisions": precisions,
-            "recalls": recalls,
-        }
-        scores[f"pr_curve_{args.pr_curve_clf}"] = prc_dict
+
+        if args.label_method == "rfc":
+            for idx, lab in enumerate(labels):
+                label_key = f"label-{idx}"
+                print(f"\n--- {label_key} (rfc) ---")
+
+                scores[f"pr_curve_{args.pr_curve_clf}"][label_key] = compute_pr_curve(
+                    rr[inds0][real_labs[inds0] == lab],
+                    rg[inds1][fake_labs[inds1] == lab],
+                    nearest_k=args.nearest_k,
+                    clf=args.pr_curve_clf,
+                    lambdas=LAMBDAS,
+                )
 
     if "sw_approx" in args.metrics and label_key == "overall":
         print("Aprroximating Sliced W2.", file=sys.stderr)
@@ -206,34 +321,7 @@ def compute_scores(
 
 
 ####################################################################################################
-# Aggregate
-####################################################################################################
-
-
-def aggregate_runs(values):
-    """Aggregate one metric across runs into (mean, std).
-
-    Handles plain scalars as well as nested dicts (e.g. per-label score dicts),
-    and array-valued metrics (e.g. precision/recall curves).
-    For array-valued metrics, aggregates per-point across runs.
-    """
-    if isinstance(values[0], dict):
-        mean, std = {}, {}
-        for k in values[0]:
-            mean[k], std[k] = aggregate_runs([v[k] for v in values])
-        return mean, std
-
-    arr = np.array(values)
-    # If arr is 2D+, it's an array-valued metric: aggregate per-point (along axis 0)
-    # If arr is 1D, it's scalar values: aggregate globally
-    if arr.ndim >= 2:
-        return arr.mean(axis=0), arr.std(axis=0)
-    else:
-        return arr.mean(), arr.std()
-
-
-####################################################################################################
-# Labelwise
+# Labels
 ####################################################################################################
 
 
@@ -245,7 +333,7 @@ def labelwise_setup(args, labels):
     which case only the overall score is computed.
     """
     if not args.per_label or labels is None:
-        return None, None, np.array([])
+        return None, None, np.array([])  # FIX: problem with vendi score ?
 
     real_labs = None if labels[0] is None else np.asarray(labels[0])
     gen_labs = None if labels[1] is None else np.asarray(labels[1])
@@ -261,31 +349,44 @@ def labelwise_setup(args, labels):
     return real_labs, gen_labs, np.unique(real_labs)
 
 
-def unpack_nested_labelwise_metric(scores, metric_name, run_scores):
-    """Unpack metric with per-label results from scores into run_scores.
+def unpack_nested_labelwise_metric(run_scores):
+    """Auto-detect and unpack all metrics with nested labelwise results.
 
-    Converts a metric dict that contains both overall and per-label results
-    (keyed by "label-i") into the run_scores structure where each label_key
-    gets metric entries with the metric_name prefix.
+    Scans run_scores["overall"] for metrics that contain nested per-label dicts
+    (keyed by "label-i") and unpacks them into the flat run_scores structure.
 
-    Args:
-        scores: dict containing metric_name with overall + per-label results
-        metric_name: str, key in scores (e.g., "prdc")
-        run_scores: dict to update with unpacked results
+    Transforms: run_scores["overall"]["prdc"] = {P: ..., label-0: {P: ...}, label-1: {...}}
+    Into: run_scores["overall"]["prdc"] = {P: ...}
+          run_scores["label-0"]["prdc"] = {P: ...}
+          run_scores["label-1"]["prdc"] = {P: ...}
+
+    This is called for rfc/rcf label methods where metrics return nested results.
     """
-    if metric_name not in scores:
+    if "overall" not in run_scores:
         return
 
-    metric_data = scores.pop(metric_name)
-    label_keys = [k for k in metric_data.keys() if k.startswith("label-")]
+    for metric_name in list(run_scores["overall"].keys()):
+        metric_data = run_scores["overall"].get(metric_name)
+        # Check if this metric has nested labelwise structure
+        if not isinstance(metric_data, dict):
+            continue
 
-    # Unpack per-label results
-    for label_key in label_keys:
-        label_data = metric_data.pop(label_key)
-        run_scores[label_key] = {f"{metric_name}-{k}": v for k, v in label_data.items()}
+        label_keys = [k for k in metric_data.keys() if k.startswith("label-")]
+        if not label_keys:
+            continue
 
-    # Merge overall results into scores with metric prefix
-    scores.update({f"{metric_name}-{k}": v for k, v in metric_data.items()})
+        # Extract overall results (everything that's not label-i)
+        overall_data = {
+            k: v for k, v in metric_data.items() if not k.startswith("label-")
+        }
+        run_scores["overall"][metric_name] = overall_data
+
+        # Unpack per-label results
+        for label_key in label_keys:
+            label_data = metric_data[label_key]
+            if label_key not in run_scores:
+                run_scores[label_key] = {}
+            run_scores[label_key][metric_name] = label_data
 
 
 def aggregate_labelwise_scores(run_scores):
@@ -306,19 +407,26 @@ def aggregate_labelwise_scores(run_scores):
 
     for metric_name in sample_keys:
         metric_values = [run_scores[lk][metric_name] for lk in label_keys]
-        mean, _ = aggregate_runs(metric_values)
+        mean, _ = aggregate(metric_values)
         run_scores["agg"][metric_name] = mean
-        # Compute diff as overall - agg
+        # Compute diff as overall - agg (handle dict-valued metrics component-wise)
         overall_value = run_scores["overall"][metric_name]
-        run_scores["diff"][metric_name] = overall_value - mean
+        if isinstance(overall_value, dict) and isinstance(mean, dict):
+            run_scores["diff"][metric_name] = {
+                k: overall_value[k] - mean[k]
+                for k in overall_value
+                if k in mean and not isinstance(overall_value[k], dict)
+            }
+        else:
+            run_scores["diff"][metric_name] = overall_value - mean
 
 
 ####################################################################################################
-# Run
+# Randomness
 ####################################################################################################
 
 
-def _run_plan(args, real_labs):
+def randomness_manager(args, real_labs):
     """Yield ``(real_labs_r, sub_seed, tag)`` for each run.
 
     Each run advances exactly one source of randomness while pinning the other,
@@ -344,32 +452,65 @@ def _run_plan(args, real_labs):
             yield real_labs, args.seed + r, ""
 
 
-def _run_default(args, real_reps, fake_reps, test_reps, labels):
-    """Standard per-label runs, with the optional ``--random-labels`` modifier.
+####################################################################################################
+# Run
+####################################################################################################
 
-    Per-label groups are obtained by filtering the overall reps with the real
-    labels (true, or permuted under ``--random-labels``). The "overall" score is
-    invariant to the random permutation, so when randomizing labels (random
-    reduction pinned) it is computed once and reused across runs.
+
+def run_compute_scores(args, real_reps, fake_reps, test_reps, labels=None):
+    """
+    Compute scores with per-label breakdown if args.per_label is set, using the
+    specified args.label_method.
+
+    Label method strategies:
+
+    frc (filter-reduce-compute):
+        For each label:
+        1. Filter the dataset to only include samples with the current label.
+        2. Reduce the filtered dataset to a smaller subset (if necessary).
+        3. Compute the desired metrics on the reduced dataset.
+
+    rfc (reduce-filter-compute):
+        1. Reduce the dataset to a smaller subset (if necessary).
+        For each label:
+        2. Filter the reduced dataset to only include samples with the current label.
+        3. Compute the desired metrics on the filtered dataset.
+
+    rcf (reduce-compute-filter):
+        1. Reduce the dataset to a smaller subset (if necessary).
+        2. Compute the prerequisites for the desired metrics on the reduced dataset.
+        For each label:
+        3. Filter the computed results to only include samples with the current label.
+
+    When using `rcf` or `rfc` the output scores will be a nested dict with the overall
+    score and per-label scores. For example, the output of compute_prdc will be:
+    ```
+        scores["prdc"] = {
+            "P": ..., "R": ..., "C": ..., "D": ...,
+            "label-0": {"P": ..., "R": ...},
+            "label-1": {"P": ..., "R": ...},
+        }
+    ```
+    The per-label scores will need to be unpacked.
     """
 
-    all_runs_scores = []  # list of per-run dicts: {label: scores_dict}
+    all_runs_scores = []  # list of per-run dicts: {label_key: scores_dict}
     vendi_scores = {}
 
-    real_labs, fake_labs, label_values = labelwise_setup(args, labels)
+    real_labs, fake_labs, labels = labelwise_setup(args, labels)
 
-    for r, (real_labs_, seed_, tag) in enumerate(_run_plan(args, real_labs)):
+    for r, (real_labs_, seed_, tag) in enumerate(randomness_manager(args, real_labs)):
         print(f"\n=== Run {r + 1}/{args.nruns} {tag} ===")
         run_scores = defaultdict(dict)
 
         print("\n--- overall ---")
-        print(f"samples with shapes {real_reps.shape} and {fake_reps.shape}\n")
+        print(f"Samples with shapes {real_reps.shape} and {fake_reps.shape}\n")
         scores, vs = compute_scores(
-            args,
+            args,  # label method, metrics, metrics parameters
             real_reps,
             fake_reps,
             test_reps,
-            labels=[real_labs_, fake_labs],
+            label_setup=(real_labs_, fake_labs, labels),
             label_key="overall",
             seed=seed_,
         )
@@ -378,24 +519,27 @@ def _run_default(args, real_reps, fake_reps, test_reps, labels):
 
         run_scores["overall"] = scores
 
-        for idx, lab in enumerate(label_values):
-            label_key = f"label-{idx}"
-            rr = real_reps[real_labs_ == lab]
-            rg = fake_reps[fake_labs == lab]
+        if args.label_method == "frc":
+            for idx, lab in enumerate(labels):
+                label_key = f"label-{idx}"
+                print(f"\n--- {label_key} (frc) ---")
 
-            print(f"\n--- {label_key} ---")
-            print(f"samples with shapes {rr.shape} and {rg.shape}\n")
+                rr = real_reps[real_labs_ == lab]
+                rg = fake_reps[fake_labs == lab]
 
-            scores, _ = compute_scores(
-                args,
-                rr,
-                rg,
-                test_reps,
-                labels=None,
-                label_key=label_key,
-                seed=seed_,
-            )
-            run_scores[label_key].update(scores)
+                scores, _ = compute_scores(
+                    args,
+                    rr,
+                    rg,
+                    test_reps,
+                    label_setup=None,
+                    label_key=label_key,
+                    seed=seed_,
+                )
+                run_scores[label_key].update(scores)
+
+        # Unpack nested labelwise metrics from rfc/rcf into flat structure
+        unpack_nested_labelwise_metric(run_scores)
 
         aggregate_labelwise_scores(run_scores)
         all_runs_scores.append(run_scores)
@@ -403,43 +547,7 @@ def _run_default(args, real_reps, fake_reps, test_reps, labels):
         logger.debug("Run scores:")
         logger.debug(pformat(run_scores))
 
-    return all_runs_scores, vendi_scores
-
-
-def run_compute_score(args, real_reps, fake_reps, test_reps, labels=None):
-    """reps_r, reps_g: overall real/generated representation arrays (Nimg, ndim).
-
-    Per-label groups, when --per-label is set, are derived by filtering these
-    overall reps with the labels -- no separate per-label representations needed.
-    For knn_filter metric, all per-label results are computed in a single call.
-    """
-    all_runs_scores, vendi_scores = _run_default(
-        args,
-        real_reps,
-        fake_reps,
-        test_reps,
-        labels,
-    )
-
-    # Compute mean (and std if nruns > 1) across runs for all labels
-    all_scores = {}
-    all_keys = all_runs_scores[0].keys()
-
-    for key in all_keys:  # overall, label-i, agg
-        all_metrics = all_runs_scores[0][key].keys()
-        mean_scores, std_scores = {}, {}
-
-        for metric in all_metrics:
-            values = [run[key][metric] for run in all_runs_scores]
-            if metric == "realism":
-                mean_scores[metric] = values[-1]
-                continue
-            # values may be scalars or nested per-label dicts (knn_filter)
-            mean_scores[metric], std_scores[metric] = aggregate_runs(values)
-
-        all_scores[key] = mean_scores
-        if args.nruns > 1:
-            all_scores[f"{key}_std"] = std_scores
+    all_scores = aggregate_runwise_scores(all_runs_scores, args)
 
     logger.debug("Final scores:")
     logger.debug(pformat(all_scores))

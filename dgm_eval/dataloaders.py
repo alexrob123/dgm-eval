@@ -45,7 +45,7 @@ def get_dataset_name(p):
         else:
             break
 
-    return "_".join(reversed(parts))
+    return "_".join(reversed(parts)).replace("-", "_")
 
 
 class ImagePathDataset(torch.utils.data.Dataset):

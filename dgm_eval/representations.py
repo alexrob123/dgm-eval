@@ -33,7 +33,7 @@ def compute_reps(DM, model, device, args):
         "./out-data",
         DM.dataset_name,
         "reps",
-        f"seed-{args.seed}",
+        f"seed_{args.seed}",
     )
 
     reps = None

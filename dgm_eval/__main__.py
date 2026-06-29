@@ -20,7 +20,7 @@ from .metrics import compute_inception_score
 from .models import MODELS, load_encoder
 from .representations import compute_reps
 from .samples import save_samples
-from .scores import run_compute_score, save_score, save_scores
+from .scores import run_compute_scores, save_score, save_scores
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -28,6 +28,8 @@ logging.basicConfig(
     format="[%(levelname)s] %(name)s.%(funcName)s: %(message)s",
     force=True,
 )
+
+SAMPLE_DIR = "./out-data"
 
 
 def get_inception_scores(args, device, num_workers):
@@ -80,6 +82,33 @@ def get_inception_scores(args, device, num_workers):
 ###################################################################################################
 ###################################################################################################
 
+LABEL_METHODS_DIC = {
+    "frc": "filter-reduce-compute",  # loop in `run_compute_scores`
+    "rfc": "reduce-filter-compute",  # loop in `compute_scores`
+    "rcf": "reduce-compute-filter",  # loop in `compute_{metric}`
+}
+LABEL_METHODS = list(LABEL_METHODS_DIC.keys())
+
+"""
+frc: filter-reduce-compute 
+    For each label:
+    1. Filter the dataset to only include samples with the current label.
+    2. Reduce the filtered dataset to a smaller subset (if necessary).
+    3. Compute the desired metrics on the reduced dataset.
+
+rfc: reduce-filter-compute 
+    1. Reduce the dataset to a smaller subset (if necessary).
+    For each label:
+    2. Filter the reduced dataset to only include samples with the current label.
+    3. Compute the desired metrics on the filtered dataset.
+
+rcf: reduce-compute-filter
+    1. Reduce the dataset to a smaller subset (if necessary).
+    2. Compute the prerequisites for the desired metrics on the reduced dataset.
+    For each label:
+    3. Filter the computed results to only include samples with the current label.
+"""
+
 
 @click.command()
 # Datasets
@@ -110,7 +139,7 @@ def get_inception_scores(args, device, num_workers):
 @click.option("--xp",                   type=click.Choice(["sweep_prdc_k"]), default=None,      help="Experiment to run.")  # fmt: skip
 @click.option("--nruns",                type=int,   default=1,                                  help="Number of runs to average scores over.")  # fmt: skip
 @click.option("--per-label",            is_flag=True, default=False,                            help="Whether to compute metrics per label. Not implement for every metric .")  # fmt: skip
-@click.option("--label-method",         type=click.Choice(["filter", "sweep"]), default=None,   help="How to handle labelwise metric computation. Only if --per-label is set.")  # fmt: skip
+@click.option("--label-method",         type=click.Choice(LABEL_METHODS), default="frc",        help="How to handle labelwise metric computation. Only if --per-label is set.")  # fmt: skip
 @click.option("--random-labels",        is_flag=True, default=False,                            help="Replace the real labels with a fresh random permutation, varied across runs while the subsampling is held fixed.")  # fmt: skip
 # Hardware
 @click.option("--device",               type=str,   default=None,                               help="Device to use. Like cuda, cuda:0 or cpu")  # fmt: skip
@@ -195,7 +224,7 @@ def main(
     args.xp = xp
     args.nruns = nruns
     args.per_label = per_label
-    args.label_method = label_method
+    args.label_method = label_method if per_label else None
     args.random_labels = random_labels
     # Hardware
     args.device = device
@@ -205,9 +234,6 @@ def main(
     # Output
     args.save_imgs = save_imgs
     args.output_dir = output_dir
-
-    if args.per_label and args.label_method is None:
-        raise ValueError("If --per-label is set, --label-method must be specified.")
 
     if args.xp is not None:
         args.output_dir = os.path.join(args.output_dir, args.xp)
@@ -228,6 +254,7 @@ def run(args):
         f"\t gen: {args.gen}\n"
         f"\t model: {args.model}\n"
         f"\t metrics: {sorted(args.metrics)}\n"
+        f"\t per-label: {args.label_method if args.per_label else 'None'}\n"
         f"\t nruns: {args.nruns}\n"
         f"\t experiment: {args.xp}\n"
     )
@@ -269,11 +296,12 @@ def run(args):
         device,
         args,
     )
+    real_labs = real_dm.labels
 
-    if args.per_label and real_dm.labels is None:
+    if args.per_label and real_labs is None:
         raise ValueError(f"No labels in real dataset {real_dm.dataset_name}")
     if args.save_imgs:
-        save_samples("./out-data", real_dm)
+        save_samples(SAMPLE_DIR, real_dm)
 
     # --- TEST REPRESENTATIONS ---
 
@@ -314,24 +342,24 @@ def run(args):
             device,
             args,
         )
+        gen_labs_i = gen_dm_i.labels
 
-        if args.per_label and gen_dm_i.labels is None:
+        if args.per_label and gen_labs_i is None:
             raise ValueError(f"No labels in generated dataset {gen_dm_i.dataset_name}")
         if args.save_imgs:
-            save_samples("./out-data", gen_dm_i)
+            save_samples(SAMPLE_DIR, gen_dm_i)
 
         gen_dataset_names.append(gen_dm_i.dataset_name)
 
         # Compute scores
         print(f"\nComputing scores between ref dataset and {path}\n")
 
-        labels = [real_dm.labels, gen_dm_i.labels]
-        scores_i, vendi_scores_i = run_compute_score(
+        scores_i, vendi_scores_i = run_compute_scores(
             args,
             real_reps,
             gen_reps_i,
             test_reps,
-            labels=labels,
+            labels=[real_labs, gen_labs_i],
         )
         if vendi_scores_i:
             vendi_scores[os.path.basename(path)] = vendi_scores_i
@@ -385,6 +413,9 @@ def run(args):
 
     if args.nruns > 1:
         desc["nruns"] = args.nruns
+
+    if args.label_method is not None:
+        desc["lab"] = args.label_method
 
     if set(args.metrics) & {"fls", "fls_overfit", "prdc", "pr_curve"}:
         if args.reduced_n != args.nsample:
