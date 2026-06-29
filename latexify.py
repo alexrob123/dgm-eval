@@ -18,7 +18,14 @@ logging.basicConfig(
 
 
 METRIC_COLS = {
-    "prdc": ["P", "R", "n_real", "n_fake"],
+    "prdc": [
+        "P",
+        # "R",
+        # "D",
+        # "C",
+        "n_real",
+        "n_fake",
+    ],
 }
 
 METRIC_RENAME = {
@@ -40,6 +47,12 @@ RAND_COND_PRECISION_EST_STR = lambda i: (
 AVG_COND_PRECISION_EST_STR = r"$E_Y \left[ \hat \alpha(P_{X|Y}, Q_{X|Y}) \right]$"
 AVG_RAND_COND_PRECISION_EST_STR = r"$E_Z \left[ \hat \alpha(P_{X|Z}, Q_{X|Z}) \right]$"
 DIFF_STR = r"$\Delta$"
+
+PRECISION_STR = {
+    "overall": r"$\hat \alpha (P_X, Q_X)$",
+    "avg_cond": r"$E_\cdot \left[ \hat \alpha(P_{X|\cdot}, Q_{X|\cdot}) \right]$",
+    "diff": r"$\hat \alpha (P_X, Q_X) - E_\cdot \left[ \hat \alpha(P_{X|\cdot}, Q_{X|\cdot}) \right]$",
+}
 
 
 def fmt_cell(row, col, df_mean, df_std):
@@ -108,10 +121,33 @@ def load_mean_std(path):
     across runs). For randomized labels that variance is over the random
     label draws; for true labels it is over the prdc subsampling.
 
+    Handles nested metric structures (e.g., metric values as dicts with components
+    like P, R, D, C) by flattening them into columns with metric name prefix (prdc-P, etc).
+
     Returns raw DataFrames WITHOUT column renaming - caller applies METRIC_RENAME at the end.
     """
     data = np.load(path, allow_pickle=True)
-    df = pd.DataFrame(data["scores"].item()["run00"]).T
+    run00 = data["scores"].item()["run00"]
+
+    # Check if metrics are nested dicts (e.g., run00['overall']['prdc'] = {P, R, D, C, ...})
+    # If so, flatten them with metric name prefix (prdc-P, prdc-R, etc)
+    flattened = {}
+    for row_key, row_data in run00.items():
+        if isinstance(row_data, dict):
+            flattened_row = {}
+            for metric_name, metric_val in row_data.items():
+                if isinstance(metric_val, dict):
+                    # Nested structure: flatten with metric prefix
+                    for comp_key, comp_val in metric_val.items():
+                        flattened_row[f"{metric_name}-{comp_key}"] = comp_val
+                else:
+                    # Scalar or array value
+                    flattened_row[metric_name] = metric_val
+            flattened[row_key] = flattened_row
+        else:
+            flattened[row_key] = row_data
+
+    df = pd.DataFrame(flattened).T
 
     mean_rows = [r for r in df.index if not r.endswith("_std")]
     std_rows = [r for r in df.index if r.endswith("_std")]
@@ -217,8 +253,9 @@ def main():
 
 @main.command()
 @click.option("--path", "-p",       help="Path containing the sweep results",                           type=click.Path(exists=True))  # fmt: skip
+@click.option("--metric", "-m",     help="Metric name to extract (e.g., 'prdc')",                       type=str, default=None)  # fmt: skip
 @click.option("--outdir", "-o",     help="Path to save the generated LaTeX tables.", metavar="DIR",     type=click.Path(), default="out-latexify")  # fmt: skip
-def xp(path, outdir):
+def xp(path, metric, outdir):
     logger.info(f"Processing results in {path}...")
 
     # Output fname
@@ -226,88 +263,92 @@ def xp(path, outdir):
     logger.info(f"Derived LaTeX table name: {fname}")
 
     # Data
-    data = np.load(path, allow_pickle=True)
-    metrics = data["scores"].item()["run00"]
-    df = pd.DataFrame(metrics).T
+    df_mean, df_std = load_mean_std(path)
+    logger.info(f"Mean DataFrame: \n{df_mean}")
+    logger.info(f"Std DataFrame: \n{df_std}")
 
-    # Split mean and std rows
-    mean_rows = [r for r in df.index if not r.endswith("_std")]
-    std_rows = [r for r in df.index if r.endswith("_std")]
-    num_labels = sum(1 for r in mean_rows if r.startswith("label-"))
+    # Map metric names to columns of interest
+    cols_for_metric = METRIC_COLS.get(metric)
+    if cols_for_metric is None:
+        raise ValueError(f"Unsupported metric: {metric}")
 
-    df_mean = df.loc[mean_rows].copy()
-    df_std = df.loc[std_rows].rename(index=lambda x: x.removesuffix("_std")).copy()
+    # Filter to only columns of interest for this metric (with metric prefix)
+    prefixed_cols = [f"{metric}-{c}" for c in cols_for_metric]
+    cols_to_keep = [c for c in prefixed_cols if c in df_mean.columns]
+    df_mean = df_mean[cols_to_keep]
+    df_std = df_std[[c for c in cols_to_keep if c in df_std.columns]]
 
-    metric_cols = [
-        "P",
-        # "R",
-        # "D",
-        # "C",
-    ]
-    count_col = "n_real"  # n_real == n_fake always
-
-    # format cells
-    col_keys = [count_col] + metric_cols
-    df_display = pd.DataFrame(
-        {
-            col: [fmt_cell(row, col, df_mean, df_std) for row in df_mean.index]
-            for col in col_keys
-        },
-        index=df_mean.index,
-    )
-
-    # Display the 5 best and 5 worst labels by precision (ordered by index)
-    label_scores = [df_mean.loc[f"label-{i}", "P"] for i in range(num_labels)]
-    selected_labels = select_best_worst_indexes(label_scores, n_each=5)
-    label_rows = [f"label-{i}" for i in selected_labels]
-    row_keys = ["overall"] + label_rows + ["agg", "diff"]
-
-    row_rename = {
-        "overall": PRECISION_EST_STR,
-        "agg": AVG_COND_PRECISION_EST_STR,
-        "diff": DIFF_STR,
-        **{f"label-{i}": COND_PRECISION_EST_STR(i) for i in selected_labels},
-    }
+    # Rename columns: strip prefix and apply METRIC_RENAME
     col_rename = {
-        count_col: "N",
-        "P": "P",
-        "R": "R",
-        "D": "D",
-        "C": "C",
+        col: METRIC_RENAME.get(col.split("-")[-1], col.split("-")[-1])
+        for col in cols_to_keep
     }
-
-    df_final = df_display.loc[row_keys, col_keys].rename(
-        index=row_rename, columns=col_rename
-    )
-
-    if outdir is not None:
-        outdir = Path(outdir).expanduser()
-        outdir.mkdir(parents=True, exist_ok=True)
-        save_latex_table(df_final, outdir=outdir, fname=fname)
-
-    return df_final, fname
+    df_mean = df_mean.rename(columns=col_rename)
+    df_std = df_std.rename(columns=col_rename)
+    logger.info(f"Mean DataFrame: \n{df_mean}")
+    logger.info(f"Std DataFrame: \n{df_std}")
 
 
-####################################################################################################
-# METRIC KNN-FILTER
-####################################################################################################
+#     # format cells
+#     df_display = pd.DataFrame(
+#         {
+#             col: [fmt_cell(row, col, df_mean, df_std) for row in df_mean.index]
+#             for col in df_mean.columns
+#         },
+#         index=df_mean.index,
+#     )
+
+#     num_labels = sum(1 for r in df_mean.index if r.startswith("label-"))
+
+#     # Display the 5 best and 5 worst labels by precision (ordered by index)
+#     label_scores = [df_mean.loc[f"label-{i}", "P"] for i in range(num_labels)]
+#     selected_labels = select_best_worst_indexes(label_scores, n_each=5)
+#     label_rows = [f"label-{i}" for i in selected_labels]
+#     row_keys = ["overall"] + label_rows + ["agg", "diff"]
+
+#     row_rename = {
+#         "overall": PRECISION_EST_STR,
+#         "agg": AVG_COND_PRECISION_EST_STR,
+#         "diff": DIFF_STR,
+#         **{f"label-{i}": COND_PRECISION_EST_STR(i) for i in selected_labels},
+#     }
+#     col_rename = {
+#         count_col: "N",
+#         "P": "P",
+#         "R": "R",
+#         "D": "D",
+#         "C": "C",
+#     }
+
+#     df_final = df_display.loc[row_keys, col_keys].rename(
+#         index=row_rename, columns=col_rename
+#     )
+
+#     if outdir is not None:
+#         outdir = Path(outdir).expanduser()
+#         outdir.mkdir(parents=True, exist_ok=True)
+#         save_latex_table(df_final, outdir=outdir, fname=fname)
+
+#     return df_final, fname
 
 
 ####################################################################################################
 # XP SWEEP PRDC K
 ####################################################################################################
 
-SWEEP_PRDC_K_DIR = "./experiments/sweep-prdc-k"
+SWEEP_PRDC_K_DIR = "./out/sweep_prdc_k"
 
 
 @main.command()
 @click.option("--dir", "-d",        help="Directory containing the sweep results",                      type=click.Path(exists=True))  # fmt: skip
-@click.option("--metric", "-m",     help="Metric name to extract (e.g., 'prdc')",         type=str, default=None)  # fmt: skip
+@click.option("--metric", "-m",     help="Metric name to extract (e.g., 'prdc')",                       type=str, default=None)  # fmt: skip
+@click.option("--random-labs",      help="Whether to use randomized labels (default: false)",           is_flag=True)  # fmt: skip
 @click.option("--outdir", "-o",     help="Path to save the generated LaTeX tables.", metavar="DIR",     type=click.Path(), default="out-latexify")  # fmt: skip
-def xp_sweep_prdc_k(dir, metric, outdir):
+def xp_sweep_prdc_k(dir, metric, random_labs, outdir):
 
     # Handle no dir input
     if dir is None:
+        logger.info(f"DEFAULT: Running for all subdirs in {SWEEP_PRDC_K_DIR}")
         for subdir in sorted(Path(SWEEP_PRDC_K_DIR).iterdir()):
             if subdir.is_dir():
                 if metric is not None:
@@ -323,25 +364,44 @@ def xp_sweep_prdc_k(dir, metric, outdir):
                     logger.info(
                         f"\nProcessing {subdir.name} with metric: {single_metric}...\n"
                     )
-                    xp_sweep_prdc_k.callback(str(subdir), single_metric, outdir)
+                    xp_sweep_prdc_k.callback(
+                        str(subdir),
+                        single_metric,
+                        random_labs,
+                        outdir,
+                    )
         return
 
-    logger.info(f"\nProcessing sweep results in {dir} for metric: {metric}...\n")
+    logger.info(
+        f"\nProcessing sweep results in {dir} \n"
+        f"\t metric: {metric} \n"
+        f"\t random_labs={random_labs} \n"
+    )
 
     # Find all result files in the directory (one per k value)
     paths = []
     for fname in os.listdir(dir):
-        if fname.endswith(".npz"):
-            path = os.path.join(dir, fname)
-            paths.append(path)
-            logger.info(f"Found result file: {path}")
+        if not fname.endswith(".npz"):
+            continue
+        is_rand_file = "-random_labs" in fname
+        if is_rand_file != random_labs:
+            continue
+        path = os.path.join(dir, fname)
+        paths.append(path)
+        logger.info(f"Found result file: {path}")
     paths.sort()
+
+    if not paths:
+        logger.warning(
+            f"No matching .npz files found in {dir} (random_labs={random_labs})."
+        )
+        return
 
     # Construct output filename, replacing metrics substring with metric name
     stem = Path(paths[0]).stem
-    stem_no_k = stem.split("_k-")[0]
+    stem_no_k = stem.split("-k_")[0]
     stem_no_k = stem_no_k.replace(get_metric_substring(stem_no_k, metric), metric)
-    fname = "xp-sweep-prdc-k_" + stem_no_k
+    fname = "xp_sweep_prdc_k-" + stem_no_k
     logger.info(f"Derived LaTeX table name: {fname}")
 
     # Map metric names to columns of interest
@@ -356,7 +416,7 @@ def xp_sweep_prdc_k(dir, metric, outdir):
     records = []
     for path in paths:
         # Extract k value and use it for sorting
-        k_val = get_nearest_k_substring(Path(path).stem).split("-")[1]
+        k_val = get_nearest_k_substring(Path(path).stem).split("_")[1]
         k_sort = pd.to_numeric(k_val, errors="coerce")
         k_val = r"$\sqrt{n}$" if k_val == "None" else k_val
         logger.info(f"Fetching results for k = {k_val}")
@@ -364,14 +424,19 @@ def xp_sweep_prdc_k(dir, metric, outdir):
         # Load data using module-level function
         df_mean, df_std = load_mean_std(path)
 
-        # Filter to only columns of interest for this metric
-        cols_to_keep = [c for c in cols_for_metric if c in df_mean.columns]
+        # Filter to only columns of interest for this metric (with metric prefix)
+        prefixed_cols = [f"{metric}-{c}" for c in cols_for_metric]
+        cols_to_keep = [c for c in prefixed_cols if c in df_mean.columns]
         df_mean = df_mean[cols_to_keep]
         df_std = df_std[[c for c in cols_to_keep if c in df_std.columns]]
 
-        # Rename columns using METRIC_RENAME
-        df_mean = df_mean.rename(columns=METRIC_RENAME)
-        df_std = df_std.rename(columns=METRIC_RENAME)
+        # Rename columns: strip prefix and apply METRIC_RENAME
+        col_rename = {
+            col: METRIC_RENAME.get(col.split("-")[-1], col.split("-")[-1])
+            for col in cols_to_keep
+        }
+        df_mean = df_mean.rename(columns=col_rename)
+        df_std = df_std.rename(columns=col_rename)
         logger.info(f"Mean DataFrame: \n{df_mean}")
         logger.info(f"Std DataFrame: \n{df_std}")
 
@@ -426,7 +491,7 @@ def xp_sweep_prdc_k(dir, metric, outdir):
 # Labelwise
 ####################################################################################################
 
-LABELWISE_VS_RAND_DIR = "./out/sweep-prdc-k/"
+LABELWISE_VS_RAND_DIR = "./out"
 DEFAULT_K = 5
 
 
@@ -438,9 +503,12 @@ DEFAULT_K = 5
 def labelwise_vs_rand(path_true, path_rand, metric, outdir):
 
     # Handle no input
-    if path_true is None and path_rand is None:
+    if path_true is None or path_rand is None:
         for path_true_, path_rand_, metrics_to_run in labelwise_vs_rand_default(
-            LABELWISE_VS_RAND_DIR, metric
+            # if path_true is None, use LABELWISE_VS_RAND_DIR as base dir
+            # if path_rand is None, use path_true as base dir
+            path_true if path_true is not None else LABELWISE_VS_RAND_DIR,
+            metric,
         ):
             labelwise_vs_rand.callback(
                 str(path_true_), str(path_rand_), tuple(metrics_to_run), outdir
@@ -448,10 +516,9 @@ def labelwise_vs_rand(path_true, path_rand, metric, outdir):
         return
 
     logger.info(
-        "\n"
-        f"Processing labelwise results in {path_true}..."
-        f"Processing labelwise results in {path_rand}..."
-        f"Metric: {list(metric)}"
+        f"\nProcessing labelwise results in {path_true}..."
+        f"\nProcessing labelwise results in {path_rand}..."
+        f"\nMetric: {list(metric)}"
     )
 
     # Quick sanity check
@@ -472,29 +539,24 @@ def labelwise_vs_rand(path_true, path_rand, metric, outdir):
 def labelwise_vs_rand_default(base_dir, metric=None):
     """Find all (path_true, path_rand, metrics) triplets in base_dir."""
     base_dir = Path(base_dir)
-    rand_dirs = {
-        d.name.replace("-random_labs", ""): d
-        for d in base_dir.iterdir()
-        if d.is_dir() and "random_labs" in d.name
-    }
-    true_dirs = {
-        d.name: d
-        for d in base_dir.iterdir()
-        if d.is_dir() and "random_labs" not in d.name
-    }
-    pairs = [(true_dirs[k], rand_dirs[k]) for k in true_dirs if k in rand_dirs]
-    if not pairs:
+    logger.info(f"DEFAULT: Searching for files in dir: {base_dir}")
+
+    token = f"-k_{DEFAULT_K}"
+    true_npz_files = sorted(
+        p
+        for p in base_dir.rglob("*.npz")
+        if token in p.name and "-random_labs" not in p.name
+    )
+
+    if not true_npz_files:
         logger.warning("No matching pairs found.")
         return []
 
     triplets = []
-    for path_true, path_rand in pairs:
-        path_true_npz = path_true / f"{path_true.name}_k-{DEFAULT_K}.npz"
-        path_rand_npz = path_rand / f"{path_rand.name}_k-{DEFAULT_K}.npz"
+    for path_true_npz in true_npz_files:
+        name = path_true_npz.stem  # full filename without .npz
+        path_rand_npz = path_true_npz.parent / f"{name}-random_labs.npz"
 
-        if not path_true_npz.exists():
-            logger.warning(f"File not found: {path_true_npz}, skipping.")
-            continue
         if not path_rand_npz.exists():
             logger.warning(f"File not found: {path_rand_npz}, skipping.")
             continue
@@ -503,13 +565,16 @@ def labelwise_vs_rand_default(base_dir, metric=None):
             metrics_to_run = list(metric)
         else:
             try:
-                derived = get_metric_substring(path_true.name)
+                derived = get_metric_substring(name)
             except ValueError:
-                logger.warning(f"No metric found in {path_true.name}, skipping.")
+                logger.warning(f"No metric found in {name}, skipping.")
                 continue
             metrics_to_run = derived.split("+")
 
         triplets.append((path_true_npz, path_rand_npz, metrics_to_run))
+
+    if not triplets:
+        logger.warning("No matching pairs found.")
 
     return triplets
 
@@ -519,21 +584,14 @@ def _labelwise_vs_rand(path_true, path_rand, metric, outdir):
     # Build output fname
     stem = Path(path_true).stem
     metric_substring = get_metric_substring(stem, metric)
-    fname = "labelwise-vs-rand_" + stem.replace(metric_substring, metric)
+    fname = "labelwise_vs_rand-" + stem.replace(metric_substring, metric)
     logger.info(f"Derived LaTeX table name: {fname}")
 
     # --- Select columns to display ---
 
-    # Maps metric names to their column names(used for filtering and ordering)
-    metrics_map = {
-        "prdc": [
-            "n_real",
-            "n_fake",
-            "P",
-            # "R",
-        ],
-    }
-    target_cols = metrics_map.get(metric, [metric.upper()])
+    # Use METRIC_COLS to get submetrics for this metric, with metric name prefix for nested structures
+    submetrics = METRIC_COLS.get(metric, [])
+    target_cols = [f"{metric}-{sub}" for sub in submetrics]
 
     # Load data (raw, without renaming)
     df_tl_mean, df_tl_std = load_mean_std(path_true)
@@ -564,6 +622,8 @@ def _labelwise_vs_rand(path_true, path_rand, metric, outdir):
     # Get rows to display
     label_rows = [f"label-{i}" for i in selected_labels]
     all_rows = ["overall"] + label_rows + ["agg"]
+    if "diff" in df_tl_mean.index:
+        all_rows.append("diff")
 
     # --- Groups ---
 
@@ -583,11 +643,11 @@ def _labelwise_vs_rand(path_true, path_rand, metric, outdir):
     block_rl = fmt_block(df_rl_mean, df_rl_std, score_cols, all_rows)
     block_tl = fmt_block(df_tl_mean, df_tl_std, score_cols, all_rows)
 
-    # Delta block
-    # is meaningful only on the aggregate row: E_Y[rand] - E_Y[cond] (mean only)
-    diff = df_rl_mean.loc["agg", score_cols] - df_tl_mean.loc["agg", score_cols]
+    # Delta block - compute as agg_rand - agg_cond
     block_diff = pd.DataFrame("", index=all_rows, columns=score_cols)
-    block_diff.loc["agg"] = [f"{float(diff[c]):.3f}" for c in score_cols]
+    if "agg" in df_rl_mean.index and "agg" in df_tl_mean.index:
+        diff = df_rl_mean.loc["agg", score_cols] - df_tl_mean.loc["agg", score_cols]
+        block_diff.loc["agg"] = [f"{float(diff[c]):.3f}" for c in score_cols]
 
     # Build metric blocks with proper MultiIndex: (group, column_name)
     block_rl.columns = pd.MultiIndex.from_product([["Rand. label $Z$"], score_cols])
@@ -597,11 +657,14 @@ def _labelwise_vs_rand(path_true, path_rand, metric, outdir):
     # Combine all blocks
     df_main = pd.concat([block_counts, block_rl, block_tl, block_diff], axis=1)
 
-    # Rename cols and rows
-    col_rename = {col: METRIC_RENAME.get(col, None) for col in cols}
+    # Rename cols and rows (strip metric prefix, e.g., "prdc-P" -> "P")
+    col_rename = {
+        col: METRIC_RENAME.get(col.split("-")[-1], col.split("-")[-1]) for col in cols
+    }
     row_rename = {
-        "overall": PRECISION_EST_STR,
-        "agg": AVG_COND_PRECISION_EST_STR.replace("Y", r"\cdot"),
+        "overall": PRECISION_STR["overall"],
+        "agg": PRECISION_STR["avg_cond"],
+        "diff": PRECISION_STR["diff"],
         **{f"label-{i}": RAND_COND_PRECISION_EST_STR(i) for i in selected_labels},
     }
     df_final = df_main.rename(index=row_rename).rename(columns=col_rename)

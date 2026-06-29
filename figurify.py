@@ -80,8 +80,8 @@ def _extract_single_curve(run_results, metric_key, result_key, std_key=None):
         return None
 
     metric = result[metric_key]
-    precisions = metric["precisions"]
-    recalls = metric["recalls"]
+    precisions = metric["P"]
+    recalls = metric["R"]
     sort_idx = np.argsort(recalls)
 
     curve_data = {
@@ -92,7 +92,7 @@ def _extract_single_curve(run_results, metric_key, result_key, std_key=None):
 
     # Extract std if available
     if std_key and std_key in run_results and metric_key in run_results[std_key]:
-        prec_std = run_results[std_key][metric_key]["precisions"]
+        prec_std = run_results[std_key][metric_key]["P"]
         curve_data["std"] = prec_std[sort_idx]
 
     return curve_data
@@ -456,7 +456,7 @@ def plot_pr_curve(
     fig, ax = _create_pr_figure(curves, curves_rand, label_flag)
 
     # Set title
-    clf = metric_key.split("-")[-1].upper()
+    clf = metric_key.split("_")[-1].upper()
     ax.set_title(f"PR Curve ({clf})", fontsize=13, fontweight="bold")
 
     # Save or display
@@ -466,7 +466,10 @@ def plot_pr_curve(
         fname = Path(path).stem
 
         # Save both PDF (for LaTeX) and PNG (for viewing)
-        for fmt in ["pdf", "png"]:
+        for fmt in [
+            # "pdf",
+            "png",
+        ]:
             out_path = outdir / f"pr-curve_{fname}.{fmt}"
             fig.savefig(out_path, dpi=300, bbox_inches="tight", format=fmt)
             logger.info(f"Saved PR curve figure to {out_path}")
@@ -518,7 +521,7 @@ def pr_curve_default(base_dir, metric=None):
     """Find all (path_true, path_rand, metric) triplets for pr-curve files in base_dir."""
     base_dir = Path(base_dir)
 
-    all_npz = [f for f in base_dir.glob("*.npz") if "pr-curve" in f.name]
+    all_npz = [f for f in base_dir.glob("*.npz") if "pr_curve" in f.name]
 
     rand_files = {
         f.name.replace("-random_labs", ""): f
@@ -544,5 +547,4 @@ def pr_curve_default(base_dir, metric=None):
 
 
 if __name__ == "__main__":
-    main()
     main()
