@@ -15,8 +15,16 @@ out/
 out-data/
 out-figurify/
 out-latexify/
+out-test/
+out-tests/
 
+scripts/figurify.sh
+scripts/latexify.sh
 scripts/test.sh
+
+test.py
+
+tmp*.py
 
 PARAMETERS.md
 TODO.md
@@ -29,3 +37,4 @@ build/
 dist/
 wheels/
 *.egg-info
+.vscode
