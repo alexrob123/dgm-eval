@@ -426,15 +426,16 @@ def aggregate_labelwise_scores(run_scores):
 ####################################################################################################
 
 
-def randomness_manager(args, real_labs):
-    """Yield ``(real_labs_r, sub_seed, tag)`` for each run.
+def randomness_manager(args, real_labs, fake_labs):
+    """Yield ``(real_labs_r, fake_labs_r, sub_seed, tag)`` for each run.
 
     Each run advances exactly one source of randomness while pinning the other,
     so the across-run mean/std isolates that source:
 
-    - ``--random-labels`` advances the *random permutation* (the real-label
+    - ``--random-labels`` advances the *random permutation* (the label
       shuffle) each run while pinning the *random reduction* (the reduced_n
-      subsampling seed), isolating label-assignment variance.
+      subsampling seed), isolating label-assignment variance. Both reference
+      and generative distributions use the same random permutation.
     - otherwise the true labels are kept and the *random reduction* is advanced
       each run, isolating reduction variance.
 
@@ -444,12 +445,20 @@ def randomness_manager(args, real_labs):
     for r in range(args.nruns):
         if args.random_labels:
             # advance the random permutation; pin the random reduction
+            # Apply the same permutation to BOTH real and fake labels
             rng_perm = np.random.default_rng(args.seed + r)
-            random_labs = None if real_labs is None else rng_perm.permutation(real_labs)
-            yield random_labs, args.seed, "(random permutation)"
+            if real_labs is None:
+                random_real_labs = None
+                random_fake_labs = None
+            else:
+                perm_real = rng_perm.permutation(len(real_labs))
+                perm_fake = rng_perm.permutation(len(fake_labs))
+                random_real_labs = real_labs[perm_real]
+                random_fake_labs = fake_labs[perm_fake]
+            yield random_real_labs, random_fake_labs, args.seed, "(random permutation)"
         else:
             # advance the random reduction; keep true labels
-            yield real_labs, args.seed + r, ""
+            yield real_labs, fake_labs, args.seed + r, ""
 
 
 ####################################################################################################
@@ -499,7 +508,7 @@ def run_compute_scores(args, real_reps, fake_reps, test_reps, labels=None):
 
     real_labs, fake_labs, labels = labelwise_setup(args, labels)
 
-    for r, (real_labs_, seed_, tag) in enumerate(randomness_manager(args, real_labs)):
+    for r, (real_labs_, fake_labs_, seed_, tag) in enumerate(randomness_manager(args, real_labs, fake_labs)):
         print(f"\n=== Run {r + 1}/{args.nruns} {tag} ===")
         run_scores = defaultdict(dict)
 
@@ -510,7 +519,7 @@ def run_compute_scores(args, real_reps, fake_reps, test_reps, labels=None):
             real_reps,
             fake_reps,
             test_reps,
-            label_setup=(real_labs_, fake_labs, labels),
+            label_setup=(real_labs_, fake_labs_, labels),
             label_key="overall",
             seed=seed_,
         )
