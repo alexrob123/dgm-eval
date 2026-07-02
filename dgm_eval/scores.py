@@ -511,12 +511,15 @@ def run_compute_scores(args, real_reps, fake_reps, test_reps, labels=None):
 
     real_labs, fake_labs, labels = labelwise_setup(args, labels)
 
-    for r, (real_labs_, fake_labs_, seed_, tag) in enumerate(randomness_manager(args, real_labs, fake_labs)):
+    for r, (real_labs_, fake_labs_, seed_, tag) in enumerate(
+        randomness_manager(args, real_labs, fake_labs)
+    ):
         print(f"\n=== Run {r + 1}/{args.nruns} {tag} ===")
+        print(f"Samples with shapes {real_reps.shape} and {fake_reps.shape}\n")
+
         run_scores = defaultdict(dict)
 
         print("\n--- overall ---")
-        print(f"Samples with shapes {real_reps.shape} and {fake_reps.shape}\n")
         scores, vs = compute_scores(
             args,  # label method, metrics, metrics parameters
             real_reps,
@@ -537,7 +540,7 @@ def run_compute_scores(args, real_reps, fake_reps, test_reps, labels=None):
                 print(f"\n--- {label_key} (frc) ---")
 
                 rr = real_reps[real_labs_ == lab]
-                rg = fake_reps[fake_labs == lab]
+                rg = fake_reps[fake_labs_ == lab]
 
                 scores, _ = compute_scores(
                     args,
