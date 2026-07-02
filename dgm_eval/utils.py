@@ -16,6 +16,9 @@ def make_str(desc):
         elif k in ["model", "metrics"]:
             out_str += v.replace("-", "_")
             out_str += "-"
+        elif v is None:
+            out_str += f"{k}_None".replace("-", "_")
+            out_str += "-"
         elif not v:
             out_str += f"{k}".replace("-", "_")
             out_str += "-"

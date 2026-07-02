@@ -1,14 +1,9 @@
-import functools
 import logging
 import os
-import pathlib
 import sys
 from pprint import pformat
 
 import click
-import numpy as np
-import pandas as pd
-import torch
 
 from dgm_eval.metrics import METRICS
 from dgm_eval.metrics.pr_curve import PR_CURVE_CLFS
@@ -29,7 +24,42 @@ logging.basicConfig(
     force=True,
 )
 
+OUT_DIR = "./out"
 SAMPLE_DIR = "./out-data"
+
+XP_OPTIONS = [
+    "sweep_prdc_k",
+    "test",
+]
+
+LABEL_METHODS_DIC = {
+    "frc": "filter-reduce-compute",  # loop in `run_compute_scores`
+    "rfc": "reduce-filter-compute",  # loop in `compute_scores`
+    "rcf": "reduce-compute-filter",  # loop in `compute_{metric}`
+}
+LABEL_METHODS = list(LABEL_METHODS_DIC.keys())
+"""
+frc: filter-reduce-compute 
+    For each label:
+    1. Filter the dataset to only include samples with the current label.
+    2. Reduce the filtered dataset to a smaller subset (if necessary).
+    3. Compute the desired metrics on the reduced dataset.
+
+rfc: reduce-filter-compute 
+    1. Reduce the dataset to a smaller subset (if necessary).
+    For each label:
+    2. Filter the reduced dataset to only include samples with the current label.
+    3. Compute the desired metrics on the filtered dataset.
+
+rcf: reduce-compute-filter
+    1. Reduce the dataset to a smaller subset (if necessary).
+    2. Compute the prerequisites for the desired metrics on the reduced dataset.
+    For each label:
+    3. Filter the computed results to only include samples with the current label.
+"""
+
+
+###################################################################################################
 
 
 def get_inception_scores(args, device, num_workers):
@@ -82,33 +112,6 @@ def get_inception_scores(args, device, num_workers):
 ###################################################################################################
 ###################################################################################################
 
-LABEL_METHODS_DIC = {
-    "frc": "filter-reduce-compute",  # loop in `run_compute_scores`
-    "rfc": "reduce-filter-compute",  # loop in `compute_scores`
-    "rcf": "reduce-compute-filter",  # loop in `compute_{metric}`
-}
-LABEL_METHODS = list(LABEL_METHODS_DIC.keys())
-
-"""
-frc: filter-reduce-compute 
-    For each label:
-    1. Filter the dataset to only include samples with the current label.
-    2. Reduce the filtered dataset to a smaller subset (if necessary).
-    3. Compute the desired metrics on the reduced dataset.
-
-rfc: reduce-filter-compute 
-    1. Reduce the dataset to a smaller subset (if necessary).
-    For each label:
-    2. Filter the reduced dataset to only include samples with the current label.
-    3. Compute the desired metrics on the filtered dataset.
-
-rcf: reduce-compute-filter
-    1. Reduce the dataset to a smaller subset (if necessary).
-    2. Compute the prerequisites for the desired metrics on the reduced dataset.
-    For each label:
-    3. Filter the computed results to only include samples with the current label.
-"""
-
 
 @click.command()
 # Datasets
@@ -119,7 +122,7 @@ rcf: reduce-compute-filter
 @click.option("--nsample",              type=int,   default=50_000,                             help="Maximum number of images to use for calculation")  # fmt: skip
 @click.option("--clean-resize",         is_flag=True, default=False,                            help="Use clean resizing (from pillow)")  # fmt: skip
 @click.option("--desc-stats",           is_flag=True, default=False,                            help="Whether to compute descriptive statistics and save them in a latex table.")  # fmt: skip
-# Encoders
+# Encoder
 @click.option("--model",                type=click.Choice(MODELS), default="dinov2",            help="Model to use for generating feature representations.")  # fmt: skip
 @click.option("--arch",                 type=str,   default=None,                               help="Model architecture. If none specified use default specified in model class")  # fmt: skip
 @click.option("--checkpoint",           type=click.Path(), default=None,                        help="Path of model checkpoint.")  # fmt: skip
@@ -136,7 +139,7 @@ rcf: reduce-compute-filter
 @click.option("--heatmaps",             is_flag=True, default=False,                            help="Generate heatmaps showing the fd focus on images.")  # fmt: skip
 @click.option("--heatmaps-perturbation", is_flag=True, default=False,                           help="Add some perturbation to the images on which gradcam is applied.")  # fmt: skip
 # Setup
-@click.option("--xp",                   type=click.Choice(["sweep_prdc_k"]), default=None,      help="Experiment to run.")  # fmt: skip
+@click.option("--xp",                   type=click.Choice(XP_OPTIONS), default=None,            help="Experiment to run.")  # fmt: skip
 @click.option("--nruns",                type=int,   default=1,                                  help="Number of runs to average scores over.")  # fmt: skip
 @click.option("--per-label",            is_flag=True, default=False,                            help="Whether to compute metrics per label. Not implement for every metric .")  # fmt: skip
 @click.option("--label-method",         type=click.Choice(LABEL_METHODS), default="frc",        help="How to handle labelwise metric computation. Only if --per-label is set.")  # fmt: skip
@@ -148,7 +151,7 @@ rcf: reduce-compute-filter
 @click.option("--seed",                 type=int,   default=0,                                  help="Random seed")  # fmt: skip
 # Output
 @click.option("--save-imgs",            is_flag=True, default=False,                            help="Saves sample images per dataset.")  # fmt: skip
-@click.option("--output-dir",           type=click.Path(), default="out/",                      help="Directory to save outputs in")  # fmt: skip
+@click.option("--output-dir",           type=click.Path(), default=OUT_DIR,                      help="Directory to save outputs in")  # fmt: skip
 def main(
     # Datasets
     train,
@@ -158,7 +161,7 @@ def main(
     nsample,
     clean_resize,
     desc_stats,
-    # Encoders
+    # Encoder
     model,
     arch,
     checkpoint,
@@ -204,7 +207,7 @@ def main(
     args.nsample = nsample
     args.clean_resize = clean_resize
     args.desc_stats = desc_stats
-    # Encoders
+    # Encoder
     args.model = model
     args.arch = arch
     args.checkpoint = checkpoint
@@ -248,15 +251,43 @@ def main(
 def run(args):
     logger.info(
         "\nRunning evaluation...\n"
-        "------------------------------------------------------------"
-        "\nArguments:\n"
+        + "------------------------------------------------------------"
+        "\nArguments - Datasets:\n"
         f"\t train: {args.train}\n"
         f"\t gen: {args.gen}\n"
+        f"\t nsample: {args.nsample}\n"
+        + "------------------------------------------------------------"
+        "\nArguments - Encoder:\n"
         f"\t model: {args.model}\n"
+        f"\t save: {args.save}\n"
+        + "------------------------------------------------------------"
+        "\nArguments - Metrics:\n"
         f"\t metrics: {sorted(args.metrics)}\n"
-        f"\t per-label: {args.label_method if args.per_label else 'None'}\n"
-        f"\t nruns: {args.nruns}\n"
+        + (
+            f"\t reduced_n: {args.reduced_n}\n"
+            if set(["prdc", "pr_curve"]) & set(args.metrics)
+            else ""
+        )
+        + (
+            f"\t nearest_k: {args.nearest_k}\n"
+            if set(["prdc", "pr_curve"]) & set(args.metrics)
+            else ""
+        )
+        + (
+            f"\t pr_curve_clf: {args.pr_curve_clf}\n"
+            if "pr_curve" in args.metrics
+            else ""
+        )
+        + (f"\t splits: {args.splits}\n" if set(["is"]) & set(args.metrics) else "")
+        + "------------------------------------------------------------"
+        "\nArguments - Setup:\n"
         f"\t experiment: {args.xp}\n"
+        f"\t nruns: {args.nruns}\n"
+        f"\t per-label: {args.label_method if args.per_label else 'None'}\n"
+        f"\t random-labels: {args.random_labels}\n"
+        + "------------------------------------------------------------"
+        "\nArguments - Output:\n"
+        f"\t out: {args.output_dir}\n"
     )
 
     device, num_workers = get_device_and_num_workers(args.device, args.num_workers)
