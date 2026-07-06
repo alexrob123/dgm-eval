@@ -134,6 +134,15 @@ def compute_scores(
     if label_setup is not None:
         real_labs, fake_labs, labels = label_setup
 
+        # ----------------------------------------------------------------------------------------------------
+        # if real_labs is not None:
+        #     unique_real, counts_real = np.unique(real_labs, return_counts=True)
+        #     print(
+        #         f"[DEBUG compute_scores] real_labs unique values and counts: {dict(zip(unique_real, counts_real))}",
+        #         file=sys.stderr,
+        #     )
+        # ----------------------------------------------------------------------------------------------------
+
     scores = {}
     vendi_scores = {}
 
@@ -230,6 +239,14 @@ def compute_scores(
         inds0 = rng.choice(rr.shape[0], reduced_n, replace=False)
         inds1 = rng.choice(rg.shape[0], reduced_n, replace=False)
 
+        # ----------------------------------------------------------------------------------------------------
+        # if args.per_label and args.label_method == "rcf" and real_labs is not None:
+        #     print(
+        #         f"[DEBUG PRDC] Using labels - real_labs sample: {real_labs[inds0][:5]}, fake_labs sample: {fake_labs[inds1][:5]}",
+        #         file=sys.stderr,
+        #     )
+        # ----------------------------------------------------------------------------------------------------
+
         scores["prdc"] = compute_prdc(
             rr[inds0],
             rg[inds1],
@@ -248,11 +265,29 @@ def compute_scores(
                 label_key = f"label-{idx}"
                 print(f"\n--- {label_key} (rfc) ---")
 
+                # ----------------------------------------------------------------------------------------------------
+                # n_real = (real_labs[inds0] == lab).sum()
+                # n_fake = (fake_labs[inds1] == lab).sum()
+                # if args.random_labels:
+                #     print(
+                #         f"[DEBUG RFC] label={lab}: n_real={n_real}, n_fake={n_fake}",
+                #         file=sys.stderr,
+                #     )
+                # ----------------------------------------------------------------------------------------------------
+
                 scores["prdc"][label_key] = compute_prdc(
                     rr[inds0][real_labs[inds0] == lab],
                     rg[inds1][fake_labs[inds1] == lab],
                     nearest_k=args.nearest_k,
                 )
+
+                # ----------------------------------------------------------------------------------------------------
+                # if args.random_labels:
+                #     print(
+                #         f"[DEBUG PRDC values] label={lab}: {scores["prdc"][label_key] }",
+                #         file=sys.stderr,
+                #     )
+                # ----------------------------------------------------------------------------------------------------
 
         # FIX: move realism to its own metric
         # if "realism" not in args.metrics: # rebuild in another if, keep all generated do not downsample
@@ -517,6 +552,13 @@ def run_compute_scores(args, real_reps, fake_reps, test_reps, labels=None):
         print(f"\n=== Run {r + 1}/{args.nruns} {tag} ===")
         print(f"Samples with shapes {real_reps.shape} and {fake_reps.shape}\n")
 
+        # ----------------------------------------------------------------------------------------------------
+        # if args.random_labels and real_labs_ is not None:
+        #     print(
+        #         f"[DEBUG] real_labs first 5: {real_labs_[:5]}, fake_labs first 5: {fake_labs_[:5]}"
+        #     )
+        # ----------------------------------------------------------------------------------------------------
+
         run_scores = defaultdict(dict)
 
         print("\n--- overall ---")
@@ -637,7 +679,11 @@ def save_scores(description, scores, args, is_only=False, vendi_scores={}):
 
     results_dir = args.output_dir
     if args.xp in ["sweep_prdc_k"]:
-        results_dir = os.path.join(results_dir, out_str.split("-k_")[0])
+        subdir = remove_subs(out_str, "k", "random_labs")
+        results_dir = os.path.join(results_dir, subdir)
+    if args.xp in ["sweep_reduced_n"]:
+        subdir = remove_subs(out_str, "reduced", "random_labs")
+        results_dir = os.path.join(results_dir, subdir)
     pathlib.Path(results_dir).mkdir(parents=True, exist_ok=True)
 
     out_path = os.path.join(results_dir, out_str)

@@ -17,6 +17,7 @@ out-figurify/
 out-latexify/
 out-test/
 out-tests/
+out-verytest/
 
 scripts/figurify.sh
 scripts/latexify.sh
