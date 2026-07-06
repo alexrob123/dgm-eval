@@ -2,6 +2,9 @@ import os
 
 from dgm_eval.metrics import METRICS
 
+# Filename description utilities
+####################################################################################################
+
 
 def make_str(desc):
     out_str = ""
@@ -32,6 +35,18 @@ def make_str(desc):
     return out_str.replace("_-", "-")
 
 
+def get_substring(s, prefix=None, innix=None):
+    for split in s.split("-"):
+        if prefix is not None and not split.startswith(prefix):
+            continue
+        if innix is not None and innix not in split:
+            continue
+        if prefix is None and innix is None:
+            continue
+        return split
+    return ""
+
+
 def get_metric_substring(stem, metric=None):
     if metric is None:
         for m in METRICS:
@@ -47,11 +62,15 @@ def get_metric_substring(stem, metric=None):
     raise ValueError(f"No substring containing '{metric}' in '{stem}'")
 
 
-def get_nearest_k_substring(stem):
-    for s in stem.split("-"):
-        if s.startswith("k_"):
-            return s
-    raise ValueError(f"No substring starting with 'k_' in '{stem}'")
+def remove_subs(s, *prefixes):
+    for prefix in prefixes:
+        sub = get_substring(s, prefix=prefix)
+        if sub:
+            s = s.replace("-" + sub, "")
+    return s
+
+
+####################################################################################################
 
 
 def extend_path(p):

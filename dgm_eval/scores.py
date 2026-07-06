@@ -24,7 +24,7 @@ from .metrics import (
     compute_prdc,
     sw_approx,
 )
-from .utils import extend_path, make_str
+from .utils import extend_path, make_str, remove_subs
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
