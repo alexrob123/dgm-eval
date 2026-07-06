@@ -29,6 +29,7 @@ SAMPLE_DIR = "./out-data"
 
 XP_OPTIONS = [
     "sweep_prdc_k",
+    "sweep_reduced_n",
     "test",
 ]
 
@@ -245,6 +246,10 @@ def main(
         if not set(args.metrics) & {"prdc", "pr_curve"}:
             raise ValueError("XP 'sweep_prdc_k'  requires relevant metrics")
 
+    if args.xp == "sweep_reduced_n":
+        if not set(args.metrics) & {"prdc", "pr_curve"}:
+            raise ValueError("XP 'sweep_reduced_n'  requires relevant metrics")
+
     run(args)
 
 
@@ -265,20 +270,20 @@ def run(args):
         f"\t metrics: {sorted(args.metrics)}\n"
         + (
             f"\t reduced_n: {args.reduced_n}\n"
-            if set(["prdc", "pr_curve"]) & set(args.metrics)
+            if set(args.metrics) & {"prdc", "pr_curve"}
             else ""
         )
         + (
             f"\t nearest_k: {args.nearest_k}\n"
-            if set(["prdc", "pr_curve"]) & set(args.metrics)
+            if set(args.metrics) & {"prdc", "pr_curve"}
             else ""
         )
         + (
             f"\t pr_curve_clf: {args.pr_curve_clf}\n"
-            if "pr_curve" in args.metrics
+            if set(args.metrics) & {"pr_curve"}
             else ""
         )
-        + (f"\t splits: {args.splits}\n" if set(["is"]) & set(args.metrics) else "")
+        + (f"\t splits: {args.splits}\n" if set(args.metrics) & {"is"} else "")
         + "------------------------------------------------------------"
         "\nArguments - Setup:\n"
         f"\t experiment: {args.xp}\n"
