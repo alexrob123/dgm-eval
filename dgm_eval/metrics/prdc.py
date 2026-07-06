@@ -149,6 +149,22 @@ def compute_prdc(
         nearest_k = int(np.sqrt(n_real))
         print(f"k is None. Setting it to sqrt of num samples: {nearest_k}")
 
+    # Return NaN if insufficient samples
+    if n_real < nearest_k + 1 or n_fake < nearest_k + 1:
+        logger.warning(
+            f"Insufficient samples (real: {n_real}, fake: {n_fake}, "
+            f"need: {nearest_k + 1}). Returning NaN PRDC."
+        )
+        return dict(
+            P=np.nan,
+            R=np.nan,
+            D=np.nan,
+            C=np.nan,
+            n_real=n_real,
+            n_fake=n_fake,
+            param_k=nearest_k,
+        )
+
     # Compute Balls
     radii_real = compute_NND(real_feats, nearest_k)
     radii_fake = compute_NND(fake_feats, nearest_k)

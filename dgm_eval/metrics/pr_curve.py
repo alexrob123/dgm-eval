@@ -281,6 +281,21 @@ def compute_pr_curve(
         nearest_k = int(np.sqrt(n_real))
         print(f"k is None. Setting it to sqrt of num samples: {nearest_k}")
 
+    # Return NaN if insufficient samples
+    if n_real < nearest_k + 1 or n_fake < nearest_k + 1:
+        logger.warning(
+            f"Insufficient samples (real: {n_real}, fake: {n_fake}, "
+            f"need: {nearest_k + 1}). Returning NaN PR curve."
+        )
+        n_lambdas = len(lambdas)
+        return dict(
+            P=np.full(n_lambdas, np.nan),
+            R=np.full(n_lambdas, np.nan),
+            n_real=n_real,
+            n_fake=n_fake,
+            param_k=nearest_k,
+        )
+
     P_scores = SCORE[clf](real_feats, real_feats, fake_feats, nearest_k)  # (N_real,)
     Q_scores = SCORE[clf](fake_feats, real_feats, fake_feats, nearest_k)  # (N_fake,)
 
@@ -319,9 +334,10 @@ def compute_pr_curve(
                     f"{label_key}: Insufficient samples (real: {n_real_k}, fake: {n_fake_k}, "
                     f"need: {nearest_k + 1}). Returning NaN."
                 )
+                n_lambdas = len(lambdas)
                 d[label_key] = dict(
-                    P=np.nan,
-                    R=np.nan,
+                    P=np.full(n_lambdas, np.nan),
+                    R=np.full(n_lambdas, np.nan),
                     n_real=n_real_k,
                     n_fake=n_fake_k,
                     param_k=nearest_k,
