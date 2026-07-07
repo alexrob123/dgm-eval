@@ -1,6 +1,17 @@
 import os
+import re
 
-from dgm_eval.metrics import METRICS
+import matplotlib.pyplot as plt
+import numpy as np
+
+####################################################################################################
+# Table of Contents
+####################################################################################################
+# Filename description utilities
+# Dict/List utilities
+# Dict/List aggregation utilities
+####################################################################################################
+
 
 # Filename description utilities
 ####################################################################################################
@@ -47,21 +58,6 @@ def get_substring(s, prefix=None, innix=None):
     return ""
 
 
-def get_metric_substring(stem, metric=None):
-    if metric is None:
-        for m in METRICS:
-            try:
-                return get_metric_substring(stem, m)
-            except ValueError:
-                continue
-        raise ValueError(f"No metric from METRICS found in '{stem}'")
-
-    for s in stem.split("-"):
-        if metric in s:
-            return s
-    raise ValueError(f"No substring containing '{metric}' in '{stem}'")
-
-
 def remove_subs(s, *prefixes):
     for prefix in prefixes:
         sub = get_substring(s, prefix=prefix)
@@ -89,3 +85,225 @@ def extend_path(p):
             break
 
     return "_".join(reversed(parts))
+
+
+# Dict/List conversion utilities
+####################################################################################################
+
+
+def list_of_dicts_to_dict_of_lists(list_of_dicts):
+    """
+    Convert a list of (possibly nested) dicts into a single dict of lists.
+    Recurses through nested dicts; any non-dict value (int, float, list,
+    np.ndarray, etc.) is treated as a leaf and simply collected across
+    the list into a list.
+    """
+    if not list_of_dicts:
+        return {}
+
+    # union of keys across all dicts, preserving first-seen order
+    all_keys = []
+    seen = set()
+    for d in list_of_dicts:
+        for k in d.keys():
+            if k not in seen:
+                seen.add(k)
+                all_keys.append(k)
+
+    result = {}
+    for k in all_keys:
+        values = [d.get(k) for d in list_of_dicts]  # None if missing in some dict
+        if all(isinstance(v, dict) for v in values):
+            result[k] = list_of_dicts_to_dict_of_lists(values)
+        else:
+            result[k] = values
+    return result
+
+
+# Curve interpolation utilities
+####################################################################################################
+
+
+def build_grid(n_points=1000, start=0.0, end=1.0):
+    return np.linspace(start, end, n_points)
+
+
+def interpolate_on_grid(x, y, grid):
+    """
+    Interpolate a single curve (x, y) onto a grid.
+    """
+    x = np.asarray(x)
+    y = np.asarray(y)
+
+    # np.interp requires x to be increasing
+    order = np.argsort(x)
+    x_sorted = x[order]
+    y_sorted = y[order]
+
+    y_interp = np.interp(
+        grid,
+        x_sorted,
+        y_sorted,
+        left=y_sorted[0],
+        right=y_sorted[-1],
+    )
+
+    return y_interp
+
+
+def aggregate_curves(curves, n_points=1000, start=0.0, end=1.0):
+    """
+    Aggregate M curves onto a common grid.
+
+    Args:
+        curves: list of (x, y) tuples, one per curve (length M)
+        n_points, start, end: passed to build_grid
+
+    Returns:
+        grid: the common grid, shape (n_points,)
+        curves_interp: interpolated y-values for each curve, shape (M, n_points)
+        D: list (per curve) of lists of (x, y) pairs on the common grid
+    """
+    grid = build_grid(n_points, start, end)
+
+    curves_interp = np.stack([interpolate_on_grid(x, y, grid) for x, y in curves])
+
+    D = [list(zip(grid, curves_interp[m])) for m in range(curves_interp.shape[0])]
+
+    return grid, curves_interp, D
+
+
+def plot_curves(curves, grid, curves_interp, names=None, band_mode="std"):
+    """
+    Args:
+        curves: list of (x, y) tuples, the raw curves (length M)
+        grid: common grid, shape (n_points,)
+        curves_interp: interpolated curves, shape (M, n_points)
+        names: optional list of labels, length M
+        band_mode: "std" or "quant_<level>", passed to compute_band
+    """
+    M = len(curves)
+    if names is None:
+        names = [f"{m + 1}" for m in range(M)]
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+
+    # --- Left: raw vs interpolated curves ---
+    ax = axes[0]
+    colors = plt.cm.tab10(np.linspace(0, 1, M))
+    for m, (x, y) in enumerate(curves):
+        ax.plot(
+            x,
+            y,
+            "o--",
+            color=colors[m],
+            alpha=0.4,
+            label=f"{names[m]} (raw)",
+        )
+        ax.plot(
+            grid,
+            curves_interp[m],
+            "-",
+            color=colors[m],
+            linewidth=2,
+            label=f"{names[m]} (interp)",
+        )
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_title("Raw vs. interpolated curves")
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.3)
+
+    # --- Right: aggregate curve with band ---
+    ax = axes[1]
+    mean_values, lower_values, upper_values = agg_mean_band(
+        curves_interp, mode=band_mode
+    )
+
+    ax.plot(grid, mean_values, color="black", linewidth=2, label="Mean curve")
+    ax.fill_between(
+        grid,
+        lower_values,
+        upper_values,
+        color="gray",
+        alpha=0.3,
+        label=f"Band ({band_mode})",
+    )
+    for m in range(M):
+        ax.plot(grid, curves_interp[m], color=colors[m], alpha=0.5, linewidth=1)
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_title(f"Aggregated curve ({band_mode})")
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
+
+# Dict/List aggregation utilities
+####################################################################################################
+
+
+def aggregate(d, agg_scalar="std", agg_array="std"):
+    """
+    Aggregate dict leaves into (mean, lower, upper).
+
+    Handles plain scalars, arrays and nested dicts.
+    Handles NaN values (via nan-aware reductions in agg_mean_band).
+
+    For arrays, aggregates per-point.
+    For scalars, aggregation mode is `agg_scalar`; for arrays, `agg_array`.
+    Both accept "std" or "quant_<level>" (e.g. "quant_5", "quant_10").
+    """
+
+    if isinstance(d, dict):
+        mean, lower, upper = {}, {}, {}
+        for k in d:
+            mean[k], lower[k], upper[k] = aggregate(d[k], agg_scalar, agg_array)
+        return mean, lower, upper
+
+    array = np.array(d, dtype=float)
+    agg = agg_array if array.ndim >= 2 else agg_scalar
+
+    return agg_mean_band(array, mode=agg)
+
+
+def agg_mean_band(arrays, mode="std"):
+    """
+    Compute mean curve and uncertainty band across arrays.
+
+    Args:
+        arrays: array of shape (n_arrays, n_points)
+        mode: "std" or "quant_<level>", e.g. "quant_5", "quant_10", "quant_25"
+
+    Returns:
+        mean_curve: shape (n_points,)
+        lower_curve: shape (n_points,)
+        upper_curve: shape (n_points,)
+    """
+
+    mean_values = np.nanmean(arrays, axis=0)
+
+    if mode == "std":
+        std_values = np.nanstd(arrays, axis=0)
+        lower_values = mean_values - std_values
+        upper_values = mean_values + std_values
+
+    else:
+        match = re.fullmatch(r"quant_(\d+(?:\.\d+)?)", mode)
+        if not match:
+            raise ValueError(f"Invalid mode '{mode}'.")
+
+        level = float(match.group(1))
+        if not (0 <= level <= 50):
+            raise ValueError(
+                f"Quantile level must be between 0 and 50 (got {level}). "
+                f"It represents the lower-tail percentile; the upper bound "
+                f"uses 100 - level automatically."
+            )
+
+        lower_values = np.nanpercentile(arrays, level, axis=0)
+        upper_values = np.nanpercentile(arrays, 100 - level, axis=0)
+
+    return mean_values, lower_values, upper_values

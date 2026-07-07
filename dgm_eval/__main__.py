@@ -138,7 +138,7 @@ def get_inception_scores(args, device, num_workers):
 @click.option("--pr-curve-clf",         type=click.Choice(PR_CURVE_CLFS), default="knn",        help="Classifier for PR curve")  # fmt: skip
 # Heatmaps
 @click.option("--heatmaps",             is_flag=True, default=False,                            help="Generate heatmaps showing the fd focus on images.")  # fmt: skip
-@click.option("--heatmaps-perturbation", is_flag=True, default=False,                           help="Add some perturbation to the images on which gradcam is applied.")  # fmt: skip
+@click.option("--heatmaps-perturbation",is_flag=True, default=False,                            help="Add some perturbation to the images on which gradcam is applied.")  # fmt: skip
 # Setup
 @click.option("--xp",                   type=click.Choice(XP_OPTIONS), default=None,            help="Experiment to run.")  # fmt: skip
 @click.option("--nruns",                type=int,   default=1,                                  help="Number of runs to average scores over.")  # fmt: skip

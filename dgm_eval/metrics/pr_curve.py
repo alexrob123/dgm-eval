@@ -8,6 +8,8 @@ import logging
 import numpy as np
 from sklearn.neighbors import NearestNeighbors
 
+from dgm_eval.utils import build_grid, interpolate_on_grid
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO,
@@ -232,6 +234,14 @@ def pr_curve(
     P_scores = SCORE[clf](X, X, Y, k)  # (N,)
     Q_scores = SCORE[clf](Y, X, Y, k)  # (N,)
 
+    return pr_curve_from_scores(P_scores, Q_scores, lambdas)
+
+
+def pr_curve_from_scores(
+    P_scores: np.ndarray,
+    Q_scores: np.ndarray,
+    lambdas: np.ndarray,
+):
     thresholds = 1.0 / lambdas  # (L,)
     fpr = (P_scores[:, None] < thresholds[None, :]).mean(axis=0)  # (L,)
     fnr = (Q_scores[:, None] >= thresholds[None, :]).mean(axis=0)  # (L,)
@@ -240,7 +250,11 @@ def pr_curve(
     precisions = risk.min(axis=1)  # (L,)
     recalls = precisions / lambdas  # (L,)
 
-    return precisions, recalls
+    # Grid for interpolation
+    x = build_grid(n_points=len(lambdas), start=0.0, end=1.0)
+    y = interpolate_on_grid(recalls, precisions, x)
+
+    return y, x
 
 
 def compute_pr_curve(
@@ -253,7 +267,9 @@ def compute_pr_curve(
     fake_labs=None,
     derive_labelwise=False,
 ):
-    """Compute precision-recall curve, optionally with per-label breakdown.
+    """
+    Compute precision-recall curve, optionally with per-label breakdown.
+    Labels are assumed to be integers in [0, n_labels-1].
 
     Args:
         real_feats: Real features (N_real, D)
@@ -272,25 +288,26 @@ def compute_pr_curve(
             - 'label-i': per-label dict (if derive_labelwise=True)
     """
 
+    n_real, n_fake = int(real_feats.shape[0]), int(fake_feats.shape[0])
+    n_lambdas = len(lambdas)
+
+    # Checks
     if derive_labelwise and (real_labs is None or fake_labs is None):
         raise ValueError("Arg `derive_labelwise` needs `real_labs` and `fake_labs`.")
 
-    n_real, n_fake = int(real_feats.shape[0]), int(fake_feats.shape[0])
-
     if nearest_k is None:
         nearest_k = int(np.sqrt(n_real))
-        print(f"k is None. Setting it to sqrt of num samples: {nearest_k}")
+        logger.warning(f"k is None. Setting it to sqrt of num samples: {nearest_k}")
 
     # Return NaN if insufficient samples
     if n_real < nearest_k + 1 or n_fake < nearest_k + 1:
         logger.warning(
             f"Insufficient samples (real: {n_real}, fake: {n_fake}, "
-            f"need: {nearest_k + 1}). Returning NaN PR curve."
+            f"need: {nearest_k + 1}). Returning NaN curve."
         )
-        n_lambdas = len(lambdas)
         return dict(
             P=np.full(n_lambdas, np.nan),
-            R=np.full(n_lambdas, np.nan),
+            R=build_grid(n_points=n_lambdas, start=0.0, end=1.0),
             n_real=n_real,
             n_fake=n_fake,
             param_k=nearest_k,
@@ -299,13 +316,7 @@ def compute_pr_curve(
     P_scores = SCORE[clf](real_feats, real_feats, fake_feats, nearest_k)  # (N_real,)
     Q_scores = SCORE[clf](fake_feats, real_feats, fake_feats, nearest_k)  # (N_fake,)
 
-    thresholds = 1.0 / lambdas  # (L,)
-    fpr = (P_scores[:, None] < thresholds[None, :]).mean(axis=0)  # (L,)
-    fnr = (Q_scores[:, None] >= thresholds[None, :]).mean(axis=0)  # (L,)
-
-    risk = lambdas[:, None] * fpr[None, :] + fnr[None, :]  # (L, L)
-    precisions = risk.min(axis=1)  # (L,)
-    recalls = precisions / lambdas  # (L,)
+    precisions, recalls = pr_curve_from_scores(P_scores, Q_scores, lambdas)
 
     d = dict(
         P=precisions,
@@ -331,13 +342,12 @@ def compute_pr_curve(
             # Return NaN if insufficient samples for this label
             if n_real_k < nearest_k + 1 or n_fake_k < nearest_k + 1:
                 logger.warning(
-                    f"{label_key}: Insufficient samples (real: {n_real_k}, fake: {n_fake_k}, "
-                    f"need: {nearest_k + 1}). Returning NaN."
+                    f"Insufficient samples (real: {n_real_k}, fake: {n_fake_k}, "
+                    f"need: {nearest_k + 1}). Returning NaN curve."
                 )
-                n_lambdas = len(lambdas)
                 d[label_key] = dict(
                     P=np.full(n_lambdas, np.nan),
-                    R=np.full(n_lambdas, np.nan),
+                    R=build_grid(n_points=n_lambdas, start=0.0, end=1.0),
                     n_real=n_real_k,
                     n_fake=n_fake_k,
                     param_k=nearest_k,
@@ -346,20 +356,12 @@ def compute_pr_curve(
 
             P_scores_k = P_scores[mask_real_k]
             Q_scores_k = Q_scores[mask_fake_k]
-            # Recompute scores using only label-k samples to match labelwise PRDC behavior
-            # P_scores_k = SCORE[clf](
-            #     real_feats[mask_real_k], real_feats[mask_real_k], fake_feats[mask_fake_k], nearest_k
-            # )
-            # Q_scores_k = SCORE[clf](
-            #     fake_feats[mask_fake_k], real_feats[mask_real_k], fake_feats[mask_fake_k], nearest_k
-            # )
 
-            fpr_k = (P_scores_k[:, None] < thresholds[None, :]).mean(axis=0)
-            fnr_k = (Q_scores_k[:, None] >= thresholds[None, :]).mean(axis=0)
-
-            risk_k = lambdas[:, None] * fpr_k[None, :] + fnr_k[None, :]
-            precisions_k = risk_k.min(axis=1)
-            recalls_k = precisions_k / lambdas
+            precisions_k, recalls_k = pr_curve_from_scores(
+                P_scores_k,
+                Q_scores_k,
+                lambdas,
+            )
 
             d[label_key] = dict(
                 P=precisions_k,

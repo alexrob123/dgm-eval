@@ -24,7 +24,7 @@ from .metrics import (
     compute_prdc,
     sw_approx,
 )
-from .utils import extend_path, make_str, remove_subs
+from .utils import extend_path, list_of_dicts_to_dict_of_lists, make_str, remove_subs
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -33,7 +33,7 @@ logging.basicConfig(
     force=True,
 )
 
-LAMBDAS = np.tan(np.linspace(0, np.pi / 2, 100 + 1)[1:])
+LAMBDAS = np.tan(np.linspace(0, np.pi / 2, 1000 + 1)[1:])
 
 
 ####################################################################################################
@@ -90,6 +90,8 @@ def aggregate_runwise_scores(all_runs_scores, args):
     Returns:
         all_scores: dict with aggregated results {label_key: {metric: mean_value, metric_std: std_value}}
     """
+    logger.info("Aggregating runwise scores")
+
     all_scores = {}
     all_keys = all_runs_scores[0].keys()
 
@@ -102,7 +104,7 @@ def aggregate_runwise_scores(all_runs_scores, args):
             if metric == "realism":
                 mean_scores[metric] = values[-1]
                 continue
-            # values may be scalars or nested per-label dicts (knn_filter)
+            # values may be scalars or nested per-label dicts
             mean_scores[metric], std_scores[metric] = aggregate(values)
 
         all_scores[key] = mean_scores
@@ -604,7 +606,9 @@ def run_compute_scores(args, real_reps, fake_reps, test_reps, labels=None):
         logger.debug("Run scores:")
         logger.debug(pformat(run_scores))
 
-    all_scores = aggregate_runwise_scores(all_runs_scores, args)
+    # all_scores = aggregate_runwise_scores(all_runs_scores, args)
+    all_scores = list_of_dicts_to_dict_of_lists(all_runs_scores)
+    print(all_scores)
 
     logger.debug("Final scores:")
     logger.debug(pformat(all_scores))
