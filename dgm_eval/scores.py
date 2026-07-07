@@ -599,16 +599,13 @@ def run_compute_scores(args, real_reps, fake_reps, test_reps, labels=None):
 
         # Unpack nested labelwise metrics from rfc/rcf into flat structure
         unpack_nested_labelwise_metric(run_scores)
-
         aggregate_labelwise_scores(run_scores)
         all_runs_scores.append(run_scores)
 
         logger.debug("Run scores:")
         logger.debug(pformat(run_scores))
 
-    # all_scores = aggregate_runwise_scores(all_runs_scores, args)
     all_scores = list_of_dicts_to_dict_of_lists(all_runs_scores)
-    print(all_scores)
 
     logger.debug("Final scores:")
     logger.debug(pformat(all_scores))
