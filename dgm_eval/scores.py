@@ -2,7 +2,9 @@ import logging
 import os
 import pathlib
 import sys
+import time
 from collections import defaultdict
+from datetime import datetime, timedelta
 from pprint import pformat
 
 import numpy as np
@@ -46,6 +48,16 @@ LAMBDAS = np.tan(np.linspace(0, np.pi / 2, 1000 + 1)[1:])
 # Run
 # Save
 ####################################################################################################
+
+
+def _fmt_duration(seconds):
+    """Format a duration in seconds as 'Hh Mm' (or 'Mm' if under an hour)."""
+    seconds = int(seconds)
+    hours, remainder = divmod(seconds, 3600)
+    minutes, _ = divmod(remainder, 60)
+    if hours > 0:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
 
 
 ####################################################################################################
@@ -149,22 +161,22 @@ def compute_scores(
     vendi_scores = {}
 
     if "authpct" in args.metrics and label_key == "overall":
-        print("Computing authpct \n", file=sys.stderr)
+        logger.info("Computing authpct \n")
         scores["authpct"] = compute_authpct(rr, rg)
 
     if "ct" in args.metrics and label_key == "overall":
-        print("Computing ct score \n", file=sys.stderr)
+        logger.info("Computing ct score \n")
         scores["ct"] = compute_CTscore(rr, test_reps, rg)
 
     if "ct_test" in args.metrics and label_key == "overall":
-        print(
+        logger.info(
             "Computing ct score, modified to identify mode collapse only \n",
             file=sys.stderr,
         )
         scores["ct_test"] = compute_CTscore_mode(rr, test_reps, rg)
 
     if "ct_modified" in args.metrics and label_key == "overall":
-        print(
+        logger.info(
             "Computing ct score, modified to identify memorization only \n",
             file=sys.stderr,
         )
@@ -174,15 +186,15 @@ def compute_scores(
         raise NotImplementedError("denscov metric is currently not implemented")
 
     if "fd" in args.metrics and label_key == "overall":
-        print("Computing FD \n", file=sys.stderr)
+        logger.info("Computing FD \n")
         scores["fd"] = compute_FD_with_reps(rr, rg)
 
     if "fd_eff" in args.metrics and label_key == "overall":
-        print("Computing Efficient FD \n", file=sys.stderr)
+        logger.info("Computing Efficient FD \n")
         scores["fd_eff"] = compute_efficient_FD_with_reps(rr, rg)
 
     if "fd_infinity" in args.metrics and label_key == "overall":
-        print("Computing fd_infinity \n", file=sys.stderr)
+        logger.info("Computing fd_infinity \n")
         scores["fd_infinity_value"] = compute_FD_infinity(rr, rg)
 
     if set(args.metrics) & {"fls", "fls_overfit"} and label_key == "overall":
@@ -199,7 +211,7 @@ def compute_scores(
         test_reps = test_reps[rng.choice(test_reps.shape[0], reduced_n, replace=False)]
         gen_reps = gen_reps[rng.choice(gen_reps.shape[0], reduced_n, replace=False)]
 
-        print("Computing fls \n", file=sys.stderr)
+        logger.info("Computing fls \n")
         # fls must be after ot, as it changes train_reps
         train_reps = train_reps[
             rng.choice(train_reps.shape[0], 2 * reduced_n, replace=False)
@@ -222,7 +234,7 @@ def compute_scores(
             )
 
     if "kd" in args.metrics and label_key == "overall":
-        print("Computing KD \n", file=sys.stderr)
+        logger.info("Computing KD \n")
         mmd_values = compute_mmd(rr, rg)
         scores["kd_value"] = mmd_values.mean()
         scores["kd_variance"] = mmd_values.std()
@@ -265,7 +277,7 @@ def compute_scores(
         if args.label_method == "rfc":
             for idx, lab in enumerate(labels):
                 label_key = f"label-{idx}"
-                print(f"\n--- {label_key} (rfc) ---")
+                logger.info(f"\n--- {label_key} (rfc) ---")
 
                 # ----------------------------------------------------------------------------------------------------
                 # n_real = (real_labs[inds0] == lab).sum()
@@ -334,7 +346,7 @@ def compute_scores(
         if args.label_method == "rfc":
             for idx, lab in enumerate(labels):
                 label_key = f"label-{idx}"
-                print(f"\n--- {label_key} (rfc) ---")
+                logger.info(f"\n--- {label_key} (rfc) ---")
 
                 scores[f"pr_curve_{args.pr_curve_clf}"][label_key] = compute_pr_curve(
                     rr[inds0][real_labs[inds0] == lab],
@@ -345,11 +357,11 @@ def compute_scores(
                 )
 
     if "sw_approx" in args.metrics and label_key == "overall":
-        print("Aprroximating Sliced W2.", file=sys.stderr)
+        logger.info("Aprroximating Sliced W2.")
         scores["sw_approx"] = sw_approx(rr, rg)
 
     if "vendi" in args.metrics and label_key == "overall":
-        print("Calculating diversity score", file=sys.stderr)
+        logger.info("Calculating diversity score")
         # scores['vendi'] = compute_vendi_score(reps[1])
         vendi_scores = compute_per_class_vendi_scores(rg, labels[1])
         scores["mean_vendi_per_class"] = vendi_scores.mean()
@@ -548,11 +560,12 @@ def run_compute_scores(args, real_reps, fake_reps, test_reps, labels=None):
 
     real_labs, fake_labs, labels = labelwise_setup(args, labels)
 
+    start_time = time.time()
     for r, (real_labs_, fake_labs_, seed_, tag) in enumerate(
         randomness_manager(args, real_labs, fake_labs)
     ):
-        print(f"\n=== Run {r + 1}/{args.nruns} {tag} ===")
-        print(f"Samples with shapes {real_reps.shape} and {fake_reps.shape}\n")
+        logger.info(f"\n=== Run {r + 1}/{args.nruns} {tag} ===")
+        logger.info(f"Samples with shapes {real_reps.shape} and {fake_reps.shape}\n")
 
         # ----------------------------------------------------------------------------------------------------
         # if args.random_labels and real_labs_ is not None:
@@ -563,7 +576,7 @@ def run_compute_scores(args, real_reps, fake_reps, test_reps, labels=None):
 
         run_scores = defaultdict(dict)
 
-        print("\n--- overall ---")
+        logger.info("\n--- overall ---")
         scores, vs = compute_scores(
             args,  # label method, metrics, metrics parameters
             real_reps,
@@ -581,7 +594,7 @@ def run_compute_scores(args, real_reps, fake_reps, test_reps, labels=None):
         if args.label_method == "frc":
             for idx, lab in enumerate(labels):
                 label_key = f"label-{idx}"
-                print(f"\n--- {label_key} (frc) ---")
+                logger.info(f"\n--- {label_key} (frc) ---")
 
                 rr = real_reps[real_labs_ == lab]
                 rg = fake_reps[fake_labs_ == lab]
@@ -604,6 +617,20 @@ def run_compute_scores(args, real_reps, fake_reps, test_reps, labels=None):
 
         logger.debug("Run scores:")
         logger.debug(pformat(run_scores))
+
+        # ---- Progress / ETA reporting ----
+        n_done = r + 1
+        frac_done = n_done / args.nruns
+        elapsed = time.time() - start_time
+        avg_per_run = elapsed / n_done
+        remaining = avg_per_run * (args.nruns - n_done)
+        eta_clock = datetime.now() + timedelta(seconds=remaining)
+        logger.info(
+            f"\n[progress] {n_done}/{args.nruns} runs done ({frac_done:.0%}) | "
+            f"elapsed: {_fmt_duration(elapsed)} | "
+            f"remaining: {_fmt_duration(remaining)} | "
+            f"ETA: {eta_clock.strftime('%H:%M')}"
+        )
 
     all_scores = list_of_dicts_to_dict_of_lists(all_runs_scores)
 
@@ -628,7 +655,7 @@ def save_score(
     is_only=False,
     metrics=None,
 ):
-    print("\nSaving scores...", file=sys.stderr)
+    logger.info("\nSaving scores...")
 
     ckpt_str = ""
     if ckpt is not None:
@@ -660,11 +687,11 @@ def save_score(
             else:
                 f.write(f"{key}: {value} \n")
 
-    print(f"Wrote scores to {out_path}\n", file=sys.stderr)
+    logger.info(f"Wrote scores to {out_path}\n")
 
 
 def save_scores(description, scores, args, is_only=False, vendi_scores={}):
-    print("\nSaving scores from all generated paths...", file=sys.stderr)
+    logger.info("\nSaving scores from all generated paths...")
 
     run_params = vars(args)
     run_params["reference_dataset"] = run_params["train"]
@@ -691,7 +718,7 @@ def save_scores(description, scores, args, is_only=False, vendi_scores={}):
     fname = f"{out_path}.npz"
 
     np.savez(fname, scores=scores, run_params=run_params)
-    print(f"Saved scores to {fname}\n", file=sys.stderr)
+    logger.info(f"Saved scores to {fname}\n")
 
     if vendi_scores is not None and len(vendi_scores) > 0:
         description["scores"] = "vendi"
@@ -699,5 +726,5 @@ def save_scores(description, scores, args, is_only=False, vendi_scores={}):
 
         out_str = make_str(description)
         out_path = os.path.join(results_dir, out_str)
-        print(f"Saving vendi score to {out_path}.csv", file=sys.stderr)
+        logger.info(f"Saving vendi score to {out_path}.csv")
         df.to_csv(f"{out_path}.csv")
