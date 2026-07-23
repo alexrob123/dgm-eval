@@ -43,9 +43,13 @@ Encoders:
 - [MAE](https://github.com/facebookresearch/mae)
 - [data2vec](https://ai.facebook.com/blog/ai-self-supervised-learning-data2vec/)
 
-|                                                                                                                                                      ![image](figures/humaneval-vs-inception.png "Inception")                                                                                                                                                       |
-| :-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: |
-| _Our multifaceted investigation of generative evaluation shows that diffusion models are unfairly punished by the Inception network: they synthesize more realistic images as judged by humans and their diversity more closely resembles the training data, yet are consistently ranked worse than GANs on metrics computed in Inception-V3 representation space._ |
+
+## Table of contents
+[Installation & Usage](#installation--usage)  
+[Data Access](#data-access)  
+[Visualizing Heatmaps](#visualizing-heatmaps)  
+[References](#references)  
+[License](#license)
 
 ## Installation & Usage
 
@@ -158,20 +162,6 @@ Including:
 
 Data for human evaluation of image realism can be found at `data/human-evaluation-realism/`
 
-## Dinov2 Leaderboard
-
-|                                                                                                                                                  ![image](figures/humaneval-vs-dinov2.png "DINOv2")                                                                                                                                                   |
-| :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: |
-| _DINOv2 is the best suited model for generative evaluation. Our extensive quantitative and qualitative assessments showed that it distills a generalized representation space suitable for evaluation of diverse image datasets. Metrics computed in DINOv2 space show much better alignment with human evaluation than those in Inception-V3 space._ |
-
-We have included leaderboard values on paperswithcode (links), and list all metrics in a table below:
-
-- [CIFAR10](https://paperswithcode.com/sota/image-generation-on-cifar-10)
-- [ImageNet 256x256](https://paperswithcode.com/sota/image-generation-on-imagenet-256x256)
-- [LSUN Bedroom](https://paperswithcode.com/sota/image-generation-on-lsun-bedroom-256-x-256)
-- [FFHQ 256x256](https://paperswithcode.com/sota/image-generation-on-ffhq-256-x-256)
-
-![image](figures/leaderboard.png)
 
 ## Visualizing Heatmaps
 
@@ -191,11 +181,7 @@ python -m dgm_eval CIFAR10--train CIFAR10--test \
 | :----------------------------------------: | :----------------------------------------: | :-------------------------------------: |
 | ![image](figures/heatmaps_inception_1.png) | ![image](figures/heatmaps_inception_2.png) | ![image](figures/heatmaps_dinov2_2.png) |
 
-## Citing
-
-If you use any part of this repository in your research, please cite the associated paper with the following bibtex entry:
-
-Authors: George Stein, Jesse C. Cresswell, Rasa Hosseinzadeh, Yi Sui, Brendan Leigh Ross, Valentin Villecroze, Zhaoyan Liu, Anthony L. Caterini, J. Eric T. Taylor, Gabriel Loaiza-Ganem
+## References
 
 ```
 @inproceedings{stein2023exposing,
