@@ -10,6 +10,7 @@ import numpy as np
 # Filename description utilities
 # Dict/List utilities
 # Dict/List aggregation utilities
+# Reading utilities
 ####################################################################################################
 
 
@@ -125,7 +126,7 @@ def list_of_dicts_to_dict_of_lists(list_of_dicts):
 
 
 def build_grid(n_points=1000, start=0.0, end=1.0):
-    return np.linspace(start, end, n_points)
+    return np.linspace(start, end, n_points, dtype=np.float64)
 
 
 def interpolate_on_grid(x, y, grid):
@@ -145,7 +146,7 @@ def interpolate_on_grid(x, y, grid):
         x_sorted,
         y_sorted,
         left=y_sorted[0],
-        right=y_sorted[-1],
+        right=0.0,
     )
 
     return y_interp
@@ -303,7 +304,24 @@ def agg_mean_band(arrays, mode="std"):
                 f"uses 100 - level automatically."
             )
 
-        lower_values = np.nanpercentile(arrays, level, axis=0)
-        upper_values = np.nanpercentile(arrays, 100 - level, axis=0)
+        lower_values = np.percentile(arrays, level, axis=0)
+        upper_values = np.percentile(arrays, 100 - level, axis=0)
 
     return mean_values, lower_values, upper_values
+
+
+# Reading utilities
+####################################################################################################
+
+
+def load_run(path, run="run00"):
+    data = np.load(path, allow_pickle=True)
+    run = data["scores"].item()[run]
+    return run
+
+
+def get_label_keys(run):
+    return sorted(
+        [k for k in run if k.startswith("label-") and not k.endswith("_std")],
+        key=lambda x: int(x.split("-")[1]),
+    )

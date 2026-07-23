@@ -186,8 +186,8 @@ def parzen_score(
     Fixed-bandwidth Parzen classifier.
     Same as IPR but with a single global radius per dataset
     instead of per-sample adaptive radii.
-    ρ_X = mean kNN radius over X
-    ρ_Y = mean kNN radius over Y
+    rho_X = mean kNN radius over X
+    rho_Y = mean kNN radius over Y
     """
 
     nn_X = NearestNeighbors(n_neighbors=k).fit(X)
@@ -255,6 +255,11 @@ def pr_curve_from_scores(
     y = interpolate_on_grid(recalls, precisions, x)
 
     return y, x
+
+
+# --------------------------------------------------------------------------------
+# Compute handle for PR curve computation, optionally with per-label breakdown
+# --------------------------------------------------------------------------------
 
 
 def compute_pr_curve(
