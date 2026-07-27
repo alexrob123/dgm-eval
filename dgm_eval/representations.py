@@ -1,6 +1,6 @@
+import logging
 import os
 import pathlib
-import sys
 
 import numpy as np
 import torch
@@ -12,6 +12,14 @@ except ImportError:
     # If tqdm is not available, provide a mock version of it
     def tqdm(x):
         return x
+
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(levelname)s] %(name)s.%(funcName)s: %(message)s",
+    force=True,
+)
 
 ####################################################################################################
 # Compute
@@ -28,7 +36,7 @@ def compute_reps(DM, model, device, args):
     Returns:
         reps: float32 (Nimage, ndim)
     """
-    print(f"\nGetting representations for dataset: {DM.dataset_name}", file=sys.stderr)
+    logger.info(f"Getting representations for dataset: {DM.dataset_name}")
     reps_dir = os.path.join(
         "./out-data",
         DM.dataset_name,
@@ -41,11 +49,11 @@ def compute_reps(DM, model, device, args):
         reps = load_reps(reps_dir, args.model, None, DM.dataloader, label="overall")
 
     if reps is None:
-        print("Calculating reps...", file=sys.stderr)
+        logger.info("Calculating reps...")
         reps = get_reps(model, DM.dataloader, device, normalized=False)
 
         if args.save:
-            print(f"Saving reps to {reps_dir}", file=sys.stderr)
+            logger.info(f"Saving reps to {reps_dir}")
 
             hparams = vars(DM).copy()
             # Remove keys that can't be pickled
@@ -133,7 +141,7 @@ def load_reps(saved_dir, model, checkpoint, dataloader, label=None):
     """Save representations and other info to disk at file_path"""
     save_path = get_path(saved_dir, model, checkpoint, dataloader, label)
     reps = None
-    print("Loading from:", save_path)
+    logger.info(f"Loading from: {save_path}")
     if os.path.exists(f"{save_path}.npz"):
         saved_file = np.load(f"{save_path}.npz")
         reps = saved_file["reps"]

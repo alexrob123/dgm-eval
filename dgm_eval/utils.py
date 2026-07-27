@@ -18,6 +18,38 @@ import numpy as np
 ####################################################################################################
 
 
+def make_description_dic(args, real_dm, gen_dataset_names):
+
+    desc = {}
+
+    desc["train_ds"] = real_dm.dataset_name
+    desc["gen_ds"] = "_".join(gen_dataset_names)
+    desc["model"] = (
+        args.model + "_" + args.arch if args.arch is not None else args.model
+    )
+    desc["metrics"] = "+".join(sorted(args.metrics)).replace(
+        "pr_curve", f"pr_curve_{args.pr_curve_clf}"
+    )
+    desc["nimgs"] = len(real_dm.dataloader.dataset)
+
+    if args.nruns > 1:
+        desc["nruns"] = args.nruns
+
+    if args.label_method is not None:
+        desc["lab"] = args.label_method
+
+    if set(args.metrics) & {"fls", "fls_overfit", "prdc", "pr_curve"}:
+        desc["reduced"] = args.reduced_n
+
+    if set(args.metrics) & {"prdc", "pr_curve"}:
+        desc["k"] = args.nearest_k
+
+    if args.random_labels:
+        desc["random_labs"] = ""
+
+    return desc
+
+
 def make_str(desc):
     out_str = ""
 
@@ -25,10 +57,7 @@ def make_str(desc):
         if k in ["train_ds"]:
             out_str += v.replace("-", "_")
             out_str += "_vs_"
-        elif k in ["gen_ds"]:
-            out_str += v.replace("-", "_")
-            out_str += "-"
-        elif k in ["model", "metrics"]:
+        elif k in ["gen_ds", "model", "metrics"]:
             out_str += v.replace("-", "_")
             out_str += "-"
         elif v is None:
@@ -41,8 +70,7 @@ def make_str(desc):
             out_str += f"{k}_{v}".replace("-", "_")
             out_str += "-"
 
-    if out_str.endswith("-"):
-        out_str = out_str[:-1]
+    out_str = out_str.removesuffix("-")
 
     return out_str.replace("_-", "-")
 
@@ -106,7 +134,7 @@ def list_of_dicts_to_dict_of_lists(list_of_dicts):
     all_keys = []
     seen = set()
     for d in list_of_dicts:
-        for k in d.keys():
+        for k in d:
             if k not in seen:
                 seen.add(k)
                 all_keys.append(k)

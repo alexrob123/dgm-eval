@@ -158,6 +158,25 @@ Including:
 - Training & test data at 256 x 256 resolution
 - Generated datasets for controlled experiments presented in the Appendix can be found in `toy-datasets/`
 
+
+**CIFAR10**
+
+| Dataset | Imgs | Classes | Img per class |
+|---|---|---|---|
+| CIFAR10/train | 50k | 10 | 5k |
+| CIFAR10/test | 10k | 10 | 1k |
+| CIFAR10_LOGAN | 100k | 10 | 10k |
+
+**ImageNet256**
+
+| Dataset | Imgs | Classes | Img per class |
+|---|---|---|---|
+| ImageNet256/train | 100k | 1k | 100 |
+| ImageNet256/val | 50k | 1k | 50 |
+| Imagenet256_DiT_XL_2 | 100k | 1k | 100 |
+
+
+
 ### Human Evaluation
 
 Data for human evaluation of image realism can be found at `data/human-evaluation-realism/`

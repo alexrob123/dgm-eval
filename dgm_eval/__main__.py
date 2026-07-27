@@ -7,6 +7,7 @@ import click
 
 from dgm_eval.metrics import METRICS
 from dgm_eval.metrics.pr_curve import PR_CURVE_CLFS
+from dgm_eval.utils import make_description_dic, make_str
 
 from .dataloaders import get_datamodule_from_path
 from .heatmaps import visualize_heatmaps
@@ -116,10 +117,9 @@ def get_inception_scores(args, device, num_workers):
 
 @click.command()
 # Datasets
-@click.option("--train",                type=str,                                               help="Paths to the images: real dataset.")  # fmt: skip
-@click.option("--gen",                  type=str,   multiple=True,                              help="Paths to the images, generated dataset.")  # fmt: skip
-@click.option("--train-dataset",        type=str,   default="imagenet",                         help="Dataset that model was trained on. Sets proper normalization for MAE.")  # fmt: skip
-@click.option("--test-path",            type=str,   default=None,                               help="Path to test images")  # fmt: skip
+@click.option("--train",                type=str,                                               help="Path to real dataset.")  # fmt: skip
+@click.option("--gen",                  type=str,   multiple=True,                              help="Paths to generated datasets.")  # fmt: skip
+@click.option("--test",                 type=str,   default=None,                               help="Path to test dataset")  # fmt: skip
 @click.option("--nsample",              type=int,   default=50_000,                             help="Maximum number of images to use for calculation")  # fmt: skip
 @click.option("--clean-resize",         is_flag=True, default=False,                            help="Use clean resizing (from pillow)")  # fmt: skip
 @click.option("--desc-stats",           is_flag=True, default=False,                            help="Whether to compute descriptive statistics and save them in a latex table.")  # fmt: skip
@@ -127,6 +127,7 @@ def get_inception_scores(args, device, num_workers):
 @click.option("--model",                type=click.Choice(MODELS), default="dinov2",            help="Model to use for generating feature representations.")  # fmt: skip
 @click.option("--arch",                 type=str,   default=None,                               help="Model architecture. If none specified use default specified in model class")  # fmt: skip
 @click.option("--checkpoint",           type=click.Path(), default=None,                        help="Path of model checkpoint.")  # fmt: skip
+@click.option("--model-train",          type=str,   default="imagenet",                         help="Dataset that model was trained on. Sets proper normalization for MAE.")  # fmt: skip
 @click.option("--load/--no-load",       default=True,                                           help="Load representations and statistics from previous runs if possible")  # fmt: skip
 @click.option("--depth",                type=int,   default=0,                                  help="Negative depth for internal layers, positive 1 for after projection head.")  # fmt: skip
 @click.option("--save",                 is_flag=True, default=False,                            help="Save representations to reps_dir for faster computation next time")  # fmt: skip
@@ -152,13 +153,15 @@ def get_inception_scores(args, device, num_workers):
 @click.option("--seed",                 type=int,   default=0,                                  help="Random seed")  # fmt: skip
 # Output
 @click.option("--save-imgs",            is_flag=True, default=False,                            help="Saves sample images per dataset.")  # fmt: skip
-@click.option("--output-dir",           type=click.Path(), default=OUT_DIR,                      help="Directory to save outputs in")  # fmt: skip
+@click.option("--output-dir",           type=click.Path(), default=OUT_DIR,                     help="Directory to save outputs in")  # fmt: skip
+# Run
+@click.option("--dry-run",              is_flag=True, default=False,                            help="Dry run for parameters passing check.")  # fmt: skip
+@click.option("--encoding-run",         is_flag=True, default=False,                            help="Encoding run only, stop after encoding.")  # fmt: skip
 def main(
     # Datasets
     train,
     gen,
-    train_dataset,
-    test_path,
+    test,
     nsample,
     clean_resize,
     desc_stats,
@@ -166,6 +169,7 @@ def main(
     model,
     arch,
     checkpoint,
+    model_train,
     load,
     depth,
     save,
@@ -192,6 +196,9 @@ def main(
     # Output
     save_imgs,
     output_dir,
+    # Run
+    dry_run,
+    encoding_run,
 ):
     """Run evaluation on generated and real image datasets."""
 
@@ -203,13 +210,13 @@ def main(
     # Datasets
     args.train = train
     args.gen = list(gen) if gen else []
-    args.train_dataset = train_dataset
-    args.test_path = test_path
+    args.test = test
     args.nsample = nsample
     args.clean_resize = clean_resize
     args.desc_stats = desc_stats
     # Encoder
     args.model = model
+    args.model_train = model_train
     args.arch = arch
     args.checkpoint = checkpoint
     args.load = load
@@ -238,17 +245,27 @@ def main(
     # Output
     args.save_imgs = save_imgs
     args.output_dir = output_dir
+    # Run
+    args.dry_run = dry_run
+    args.encoding_run = encoding_run
+
+    if args.dry_run and args.encoding_run:
+        raise ValueError("Cannot set both --dry-run and --encoding-run flags.")
+    if args.dry_run:
+        logger.info("[DRY RUN] - START")
+    if args.encoding_run:
+        logger.info("[ENCODING RUN] - START")
 
     if args.xp is not None:
         args.output_dir = os.path.join(args.output_dir, args.xp)
 
-    if args.xp == "sweep_prdc_k":
-        if not set(args.metrics) & {"prdc", "pr_curve"}:
-            raise ValueError("XP 'sweep_prdc_k'  requires relevant metrics")
+    if (args.xp == "sweep_prdc_k") and (not set(args.metrics) & {"prdc", "pr_curve"}):
+        raise ValueError("XP 'sweep_prdc_k'  requires relevant metrics")
 
-    if args.xp == "sweep_reduced_n":
-        if not set(args.metrics) & {"prdc", "pr_curve"}:
-            raise ValueError("XP 'sweep_reduced_n'  requires relevant metrics")
+    if (args.xp == "sweep_reduced_n") and (
+        not set(args.metrics) & {"prdc", "pr_curve"}
+    ):
+        raise ValueError("XP 'sweep_reduced_n'  requires relevant metrics")
 
     run(args)
 
@@ -259,6 +276,7 @@ def run(args):
         + "------------------------------------------------------------"
         "\nArguments - Datasets:\n"
         f"\t train: {args.train}\n"
+        f"\t test: {args.test}\n"
         f"\t gen: {args.gen}\n"
         f"\t nsample: {args.nsample}\n"
         + "------------------------------------------------------------"
@@ -297,6 +315,10 @@ def run(args):
 
     device, num_workers = get_device_and_num_workers(args.device, args.num_workers)
 
+    if args.dry_run:
+        logger.info("[DRY RUN] - END.")
+        return
+
     # --- QUICK INCEPTION SCORE OPTION ---
 
     # IS does not require a reference dataset, so compute first.
@@ -314,11 +336,13 @@ def run(args):
         ckpt=None,
         arch=None,
         clean_resize=args.clean_resize,
-        sinception=True if args.model == "sinception" else False,
+        sinception=(args.model == "sinception"),
         depth=args.depth,
     )
 
     # --- TRAIN REPRESENTATIONS ---
+
+    logger.info("--- TRAIN ---")
 
     real_dm = get_datamodule_from_path(
         args.train,
@@ -341,9 +365,11 @@ def run(args):
 
     # --- TEST REPRESENTATIONS ---
 
-    if args.test_path is not None:
+    logger.info("--- TEST ---")
+
+    if args.test is not None:
         test_dm = get_datamodule_from_path(
-            args.test_path,
+            args.test,
             model.transform,
             num_workers,
             args,
@@ -357,20 +383,22 @@ def run(args):
     else:
         test_reps = None
 
-    # --- GENERATED REPRESENTATIONS AND SCORES ---
+    # --- GEN REPRESENTATIONS ---
 
     all_scores = {}
     vendi_scores = {}
     gen_dataset_names = []
 
     for i, path in enumerate(args.gen):
+        logger.info("--- GENERATED ---")
+
         # Get representations
         gen_dm_i = get_datamodule_from_path(
             path,
             model.transform,
             num_workers,
             args,
-            sample_w_replacement=True if "train" in path else False,
+            sample_w_replacement=("train" in path),
         )
         gen_reps_i = compute_reps(
             gen_dm_i,
@@ -386,6 +414,20 @@ def run(args):
             save_samples(SAMPLE_DIR, gen_dm_i)
 
         gen_dataset_names.append(gen_dm_i.dataset_name)
+
+        # Get description
+        desc_dic = make_description_dic(args, real_dm, gen_dataset_names)
+        desc_str = make_str(desc_dic)
+        logger.info("\n" + pformat(desc_dic))
+        logger.info(f"Description string for saving scores:\n{desc_str}")
+
+        if args.encoding_run:
+            logger.info("[ENCODING RUN] - END.")
+            return
+
+        # --- SCORES ---
+
+        logger.info("--- SCORES ---")
 
         # Compute scores
         print(f"\nComputing scores between ref dataset and {path}\n")
@@ -434,40 +476,8 @@ def run(args):
 
     # --- SAVE SCORES ---
 
-    desc_model = args.model + "_" + args.arch if args.arch is not None else args.model
-    desc_metrics = "+".join(sorted(args.metrics))
-    if "pr_curve" in args.metrics:
-        desc_metrics = desc_metrics.replace("pr_curve", f"pr_curve_{args.pr_curve_clf}")
-
-    desc = {
-        "train_ds": real_dm.dataset_name,
-        "gen_ds": "_".join(gen_dataset_names),
-        "model": desc_model,
-        "metrics": desc_metrics,
-        "nimgs": len(real_dm.dataloader.dataset),
-    }
-
-    if args.nruns > 1:
-        desc["nruns"] = args.nruns
-
-    if args.label_method is not None:
-        desc["lab"] = args.label_method
-
-    if set(args.metrics) & {"fls", "fls_overfit", "prdc", "pr_curve"}:
-        if args.reduced_n != args.nsample:
-            desc["reduced"] = args.reduced_n
-
-    if set(args.metrics) & {"prdc", "pr_curve"}:
-        desc["k"] = args.nearest_k
-
-    if args.random_labels:
-        desc["random_labs"] = ""
-
-    logger.debug("Description for saving scores:")
-    logger.debug(pformat(desc))
-
     save_scores(
-        desc,
+        desc_dic,
         all_scores,
         args,
         vendi_scores=vendi_scores,

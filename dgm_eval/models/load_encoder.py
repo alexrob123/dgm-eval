@@ -1,4 +1,5 @@
 import inspect
+import logging
 import sys
 
 from .clip import CLIPEncoder
@@ -11,6 +12,13 @@ from .mae import VisionTransformerEncoder
 from .pixel import PixelEncoder
 from .simclr import SimCLRResNetEncoder
 from .swav import ResNet50Encoder  # ResNet18Encoder, ResNet18MocoEncoder,
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(levelname)s] %(name)s.%(funcName)s: %(message)s",
+    force=True,
+)
 
 MODEL_ENCODERS = {
     "inception": InceptionEncoder,
@@ -30,7 +38,7 @@ MODELS = list(MODEL_ENCODERS.keys())
 
 def load_encoder(model_name, device, **kwargs):
     """Load feature extractor"""
-    print("Loading Model...", file=sys.stderr)
+    logger.info("Loading Model...")
 
     model_cls = MODEL_ENCODERS.get(model_name)
 

@@ -1,7 +1,6 @@
 import logging
 import os
 import pathlib
-import sys
 
 import numpy as np
 import torch
@@ -123,12 +122,9 @@ class DataModule:
         self.sample_w_replacement = sample_w_replacement
 
         if sample_w_replacement:
-            print(
-                (
-                    f"Warning: sample_w_replacement={sample_w_replacement}."
-                    f"Sampling with replacement from path {path}"
-                ),
-                file=sys.stderr,
+            logger.warning(
+                f"Warning: sample_w_replacement={sample_w_replacement}."
+                f"Sampling with replacement from path {path}"
             )
             self.seed += 1
 
@@ -225,7 +221,7 @@ class DataModule:
 
     def get_torchvision_dataset(self):
         """Use torchvision.datasets"""
-        print(f"Getting torchvision dataset: {self.path}", file=sys.stderr)
+        logger.info(f"Getting torchvision dataset: {self.path}")
 
         self.dataset_name = self.path
         self.files = []  # empty list, as torchvision.datasets has various different formats
@@ -328,10 +324,8 @@ class DataModule:
         self.nimages = len(self.dataset)
         if self.batch_size > self.nimages:
             logger.warning(
-                (
-                    "Batch size is bigger than the data size. "
-                    "Setting batch size to data size"
-                )
+                "Batch size is bigger than the data size. "
+                "Setting batch size to data size"
             )
             self.batch_size = self.nimages
 
@@ -360,9 +354,9 @@ class DataModule:
             f"\tdataset name {self.dataset_name}\n"
             f"\timages {self.original_ds_len}, used {self.ds_len}\n"
             f"\tbatch size {self.batch_size}\n"
-            f"\timages in loader: {len(self.dataloader.dataset)}"
+            f"\timages in loader: {len(self.dataloader.dataset)}\n"
             f"\tlabels {self.label_values}\n"
-            f"\tsamples per label {counts}\n"
+            f"\tsamples per label {counts}"
         )
 
 
@@ -384,7 +378,7 @@ def get_datamodule(
         # e.g. CIFAR10--train, MNIST--test, etc.
         path, train_str = path.split("--")
 
-    train_set = True if train_str.upper() == "TRAIN" else False
+    train_set = train_str.upper() == "TRAIN"
 
     DM = DataModule(
         path,
@@ -408,7 +402,7 @@ def get_datamodule_from_path(
     args,
     sample_w_replacement=False,
 ):
-    print(f"\nGetting DataModule for path: {path}", file=sys.stderr)
+    logger.info(f"Getting DataModule for path: {path}")
 
     DM = get_datamodule(
         path,
@@ -420,5 +414,5 @@ def get_datamodule_from_path(
         transform=lambda x: model_transform(x),
     )
 
-    print(DM)
+    logger.info(DM)
     return DM
