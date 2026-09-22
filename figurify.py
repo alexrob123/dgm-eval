@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from dgm_eval.metrics.pr_curve import PR_CURVE_CLFS
+from dgm_eval.utils import get_substring
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -98,7 +99,16 @@ def _extract_single_curve(run_results, metric_key, result_key, std_key=None):
     return curve_data
 
 
-def _plot_curve_with_std(ax, recalls, precisions, std, color, alpha, linewidth, label):
+def _plot_curve_with_std(
+    ax,
+    recalls,
+    precisions,
+    std=None,
+    color=None,
+    alpha=1.0,
+    linewidth=1.0,
+    label="",
+):
     """Plot a curve with optional shaded std area.
 
     Parameters
@@ -489,6 +499,10 @@ def main():
     """Process results and generate figures."""
 
 
+####################################################################################################
+####################################################################################################
+
+
 @main.command()
 @click.option("--path", "-p",          help="Path to result .npz file",                          type=click.Path(exists=True), default=None)  # fmt: skip
 @click.option("--path-rand", "-r",     help="Path to random labels .npz file",                   type=click.Path(exists=True), default=None)  # fmt: skip
@@ -544,6 +558,106 @@ def pr_curve_default(base_dir, metric=None):
                 triplets.append((path_true, path_rand, m))
 
     return triplets
+
+
+####################################################################################################
+####################################################################################################
+
+SWEEP_N_DIR = "./out/sweep_n"
+
+
+@main.command()
+@click.option("--path", "-p",          help="Path to result .npz file",                          type=click.Path(exists=True), default=None)  # fmt: skip
+@click.option("--path-rand", "-r",     help="Path to random labels .npz file",                   type=click.Path(exists=True), default=None)  # fmt: skip
+@click.option("--metric", "-m",        help="Metric key (e.g., 'pr_curve_knn', 'pr_curve_ipr')", type=str, default=None)  # fmt: skip
+@click.option("--outdir", "-o",        help="Directory to save the figure",                      type=click.Path(), default="out-figurify")  # fmt: skip
+@click.option("--plt-label", "-l",     help="Flag to display label-wise curves",                 is_flag=True, default=False)  # fmt: skip
+def sweep_n(path, path_rand, metric, outdir, plt_label):
+    """
+    Plot PR curves for a sweep of n values.
+    The plot has the same structure as plot_pr_curve, but with multiple curves
+    for different n values. `label_flag`default is false to not overload the plot.
+
+
+    Parameters
+    ----------
+    path : str | Path
+        Path to the directory containing result .npz files for different n values
+    metric : str
+        The pr_curve metric key to plot (e.g., 'pr_curve_knn', 'pr_curve_ipr')
+    outdir : str | Path, optional
+        Directory to save the figure. If None, displays the plot.
+    path_rand : str | Path, optional
+        Path to the result .npz file from random labels experiment. If provided,
+        curves will be added to the plot with labelwise line in blue.
+    label_flag : bool
+        Whether to display per-label curves
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The created figure
+    """
+
+    if path is None:
+        # Build all possible sweep figures from default dir
+        raise NotImplementedError("Default behavior not implemented.")
+
+    # Find all results in the directory (one per reduced_value)
+    path = Path(path)
+    npz_files = sorted(path.glob("*.npz"))
+
+    if not npz_files:
+        logger.warning(f"No .npz files found in {path}.")
+        return
+
+    fig = plt.figure(figsize=(6, 6))
+    ax = fig.add_subplot(111)
+
+    for npz_file in npz_files:
+        logger.info(f"Processing {npz_file}...")
+
+        # Extract n value from filename (assuming format includes 'n{value}')
+        n_value = get_substring(npz_file.stem, prefix="reduced_").split("_")[-1]
+
+        data = np.load(npz_file, allow_pickle=True)
+        run_results = data["scores"].item()["run00"]
+        curves = _extract_pr_curves(run_results, metric)
+
+        # Plot overall curve for this n value
+        if "overall" in curves:
+            data_overall = curves["overall"]
+            _plot_curve_with_std(
+                ax,
+                data_overall["recalls"],
+                data_overall["precisions"],
+                # data_overall["std"],
+                color=None,
+                alpha=1.0,
+                linewidth=2.0,
+                label=f"n={n_value}",
+            )
+
+    ax.legend(fontsize=10, loc="best")
+
+    # Save or display
+    if outdir is not None:
+        outdir = Path(outdir).expanduser()
+        outdir.mkdir(parents=True, exist_ok=True)
+        fname = Path(path).stem
+
+        # Save both PDF (for LaTeX) and PNG (for viewing)
+        for fmt in [
+            # "pdf",
+            "png",
+        ]:
+            out_path = outdir / f"sweep_n-{fname}.{fmt}"
+            fig.savefig(out_path, dpi=300, bbox_inches="tight", format=fmt)
+            logger.info(f"Saved PR curve figure to {out_path}")
+    else:
+        plt.show()
+
+    return fig
 
 
 if __name__ == "__main__":
