@@ -243,7 +243,7 @@ def compute_scores(
         reduced_n = min(args.reduced_n, rr.shape[0], rg.shape[0])
 
         logger.info(
-            f"Computing PRDC with:\n"
+            f"\n Computing PRDC with:\n"
             f"\t samples = {reduced_n}\n"
             f"\t k = {args.nearest_k}\n"
             + (f"\t label_method = {args.label_method}" if args.per_label else "")
@@ -277,7 +277,7 @@ def compute_scores(
         if args.label_method == "rfc":
             for idx, lab in enumerate(labels):
                 label_key = f"label-{idx}"
-                logger.info(f"\n--- {label_key} (rfc) ---")
+                logger.info(f"--- {label_key} (rfc) ---")
 
                 # ----------------------------------------------------------------------------------------------------
                 # n_real = (real_labs[inds0] == lab).sum()
@@ -317,7 +317,7 @@ def compute_scores(
         reduced_n = min(args.reduced_n, rr.shape[0], rg.shape[0])
 
         logger.info(
-            "Computing PR curve with:\n"
+            f"\n Computing PR curve with:\n"
             f"\t classifier =  {args.pr_curve_clf}\n"
             f"\t samples = {reduced_n}\n"
             f"\t k = {args.nearest_k}\n"
@@ -346,7 +346,7 @@ def compute_scores(
         if args.label_method == "rfc":
             for idx, lab in enumerate(labels):
                 label_key = f"label-{idx}"
-                logger.info(f"\n--- {label_key} (rfc) ---")
+                logger.info(f"--- {label_key} (rfc) ---")
 
                 scores[f"pr_curve_{args.pr_curve_clf}"][label_key] = compute_pr_curve(
                     rr[inds0][real_labs[inds0] == lab],
@@ -564,7 +564,7 @@ def run_compute_scores(args, real_reps, fake_reps, test_reps, labels=None):
     for r, (real_labs_, fake_labs_, seed_, tag) in enumerate(
         randomness_manager(args, real_labs, fake_labs)
     ):
-        logger.info(f"\n=== Run {r + 1}/{args.nruns} {tag} ===")
+        logger.info(f"=== Run {r + 1}/{args.nruns} {tag} === \n")
         logger.info(f"Samples with shapes {real_reps.shape} and {fake_reps.shape}\n")
 
         # ----------------------------------------------------------------------------------------------------
@@ -576,7 +576,7 @@ def run_compute_scores(args, real_reps, fake_reps, test_reps, labels=None):
 
         run_scores = defaultdict(dict)
 
-        logger.info("\n--- overall ---")
+        logger.info("--- overall ---")
         scores, vs = compute_scores(
             args,  # label method, metrics, metrics parameters
             real_reps,
@@ -594,7 +594,7 @@ def run_compute_scores(args, real_reps, fake_reps, test_reps, labels=None):
         if args.label_method == "frc":
             for idx, lab in enumerate(labels):
                 label_key = f"label-{idx}"
-                logger.info(f"\n--- {label_key} (frc) ---")
+                logger.info(f"--- {label_key} (frc) ---")
 
                 rr = real_reps[real_labs_ == lab]
                 rg = fake_reps[fake_labs_ == lab]
@@ -630,6 +630,7 @@ def run_compute_scores(args, real_reps, fake_reps, test_reps, labels=None):
             f"elapsed: {_fmt_duration(elapsed)} | "
             f"remaining: {_fmt_duration(remaining)} | "
             f"ETA: {eta_clock.strftime('%H:%M')}"
+            f"\n"
         )
 
     all_scores = list_of_dicts_to_dict_of_lists(all_runs_scores)

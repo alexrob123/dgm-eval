@@ -416,6 +416,8 @@ def run(args):
         gen_dataset_names.append(gen_dm_i.dataset_name)
 
         # Get description
+        logger.info("--- DESCRIPTION ---")
+
         desc_dic = make_description_dic(args, real_dm, gen_dataset_names)
         desc_str = make_str(desc_dic)
         logger.info("\n" + pformat(desc_dic))
@@ -426,11 +428,8 @@ def run(args):
             return
 
         # --- SCORES ---
-
         logger.info("--- SCORES ---")
-
-        # Compute scores
-        print(f"\nComputing scores between ref dataset and {path}\n")
+        logger.info(f"{real_dm.dataset_name} / {gen_dm_i.dataset_name} scores \n")
 
         scores_i, vendi_scores_i = run_compute_scores(
             args,

@@ -350,13 +350,13 @@ class DataModule:
             counts = "N/A"
 
         return (
-            f"DataModule for path {self.path}\n"
-            f"\tdataset name {self.dataset_name}\n"
-            f"\timages {self.original_ds_len}, used {self.ds_len}\n"
-            f"\tbatch size {self.batch_size}\n"
-            f"\timages in loader: {len(self.dataloader.dataset)}\n"
-            f"\tlabels {self.label_values}\n"
-            f"\tsamples per label {counts}"
+            f"\n DataModule for path {self.path} \n"
+            f"\t dataset name {self.dataset_name} \n"
+            f"\t images {self.original_ds_len}, used {self.ds_len} \n"
+            f"\t batch size {self.batch_size} \n"
+            f"\t images in loader: {len(self.dataloader.dataset)} \n"
+            f"\t labels {self.label_values} \n"
+            f"\t samples per label {counts}"
         )
 
 

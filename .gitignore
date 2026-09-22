@@ -27,6 +27,8 @@ test.py
 
 tmp*.py
 
+DEV.md
+LOG.md
 PARAMETERS.md
 TODO.md
 
